@@ -60,7 +60,7 @@ func init() {
 	rootCmd.Flags().StringVarP(&country, "country", "c", "", "2-letter country code (e.g., IN, US, RU)")
 	rootCmd.Flags().StringVarP(&state, "state", "s", "", "State or region name")
 	rootCmd.Flags().StringVar(&city, "city", "", "City name")
-	rootCmd.Flags().StringVarP(&cameraType, "type", "t", "webcam", "Camera type: webcam, hikvision, dahua, axis, rtsp, webcamxp, yawcam, blueiris, all")
+	rootCmd.Flags().StringVarP(&cameraType, "type", "t", "", "Camera type: hikvision, dahua, axis, rtsp, dvr, nvr, avtech, geovision, webcamxp, yawcam, blueiris, all (default: broad CCTV search)")
 	rootCmd.Flags().IntVarP(&limit, "limit", "l", 25, "Maximum number of results")
 	rootCmd.Flags().StringVarP(&outputFmt, "output", "o", "table", "Output format: table, json")
 	rootCmd.Flags().BoolVarP(&verbose, "verbose", "v", false, "Show detailed results with full banner data")

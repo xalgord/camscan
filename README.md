@@ -9,7 +9,7 @@
 <h1 align="center">CamScan</h1>
 
 <p align="center">
-  <b>IP Camera Security Scanner — Discover, Analyze, Alert</b><br>
+  <b>CCTV & IP Camera Security Scanner — Discover, Analyze, Alert</b><br>
   Enumerate IP cameras via <a href="https://shodan.io">Shodan</a> and assess their security posture with <a href="https://platform.minimax.io/">Minimax M2.7</a> AI.
 </p>
 
@@ -27,12 +27,12 @@
 
 | Feature | Description |
 |---|---|
-| 🔍 **Shodan Discovery** | Find IP cameras by country, state, or city |
+| 🔍 **Shodan Discovery** | Find CCTV & IP cameras by country, state, or city |
 | 🤖 **AI Security Analysis** | Minimax M2.7 evaluates each camera's security posture passively |
-| 🔔 **Discord Alerts** | Real-time webhook notifications for High/Critical risk cameras |
+| 🔔 **Discord Alerts** | Real-time webhook notifications for High/Critical risk cameras with default credentials |
 | 🔄 **Daemon Mode** | Run as a 24/7 systemd service with configurable scan intervals |
 | 🛡️ **Deduplication** | In-memory 24h TTL cache prevents duplicate alerts across scan cycles |
-| 🎯 **Camera Type Filters** | Hikvision, Dahua, Axis, RTSP, WebcamXP, Yawcam, Blue Iris |
+| 🎯 **Camera Type Filters** | Hikvision, Dahua, Axis, DVR, NVR, AVTech, GeoVision, RTSP, and more |
 | 📊 **Risk Scoring** | Color-coded risk levels — Critical, High, Medium, Low |
 | 📦 **Output Formats** | Pretty table or JSON |
 | ⚡ **Concurrent Analysis** | Parallel AI processing with built-in rate limiting |
@@ -87,11 +87,14 @@ cp .env.example .env
 ### Basic Scans
 
 ```bash
-# Scan cameras in India (default: webcam type, limit 25)
+# Scan CCTV cameras in India (default: broad CCTV search, limit 25)
 camscan --country IN
 
 # Scan Hikvision cameras in Mumbai
 camscan --country IN --city Mumbai --type hikvision
+
+# Scan DVR/NVR devices in Delhi
+camscan --country IN --city Delhi --type dvr
 
 # Scan RTSP streams in California, limit 10
 camscan --country US --state California --type rtsp --limit 10
@@ -152,7 +155,7 @@ In daemon mode:
 | `--country` | `-c` | 2-letter country code (**required**) | — |
 | `--state` | `-s` | State or region name | — |
 | `--city` | | City name | — |
-| `--type` | `-t` | Camera type filter (see below) | `webcam` |
+| `--type` | `-t` | Camera type filter (see below) | broad CCTV |
 | `--limit` | `-l` | Max results per scan | `25` |
 | `--output` | `-o` | Output format: `table`, `json` | `table` |
 | `--verbose` | `-v` | Show detailed results with full banner | `false` |
@@ -166,10 +169,14 @@ In daemon mode:
 
 | Type | Search Query |
 |---|---|
-| `webcam` | Generic webcam devices |
+| *(default)* | Broad CCTV — IP Camera, Network Camera, DVR, NVR, Hikvision, Dahua |
 | `hikvision` | Hikvision IP cameras |
 | `dahua` | Dahua cameras |
 | `axis` | AXIS network cameras |
+| `dvr` | Digital video recorders |
+| `nvr` | Network video recorders |
+| `avtech` | AVTech DVR systems |
+| `geovision` | GeoVision surveillance |
 | `rtsp` | RTSP streaming devices |
 | `webcamxp` | WebcamXP servers |
 | `yawcam` | Yawcam devices |
@@ -190,7 +197,7 @@ In daemon mode:
 ## Example Output
 
 ```
-🔍 Searching Shodan: webcam country:IN city:"Mumbai"
+🔍 Searching Shodan: (title:"IP Camera" OR title:"DVR" ...) country:IN city:"Mumbai"
 ✓  Found 25 cameras (total in Shodan: 142)
 🤖 Analyzing 25 cameras with Minimax M2.7...
 

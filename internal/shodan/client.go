@@ -41,7 +41,7 @@ type SearchQuery struct {
 func (q *SearchQuery) BuildQuery() string {
 	var parts []string
 
-	// Camera type / product search
+	// Camera type / product search — targeting CCTV and IP surveillance cameras
 	switch strings.ToLower(q.CameraType) {
 	case "hikvision":
 		parts = append(parts, `product:"Hikvision IP Camera"`)
@@ -51,18 +51,26 @@ func (q *SearchQuery) BuildQuery() string {
 		parts = append(parts, `product:"AXIS"`)
 	case "rtsp":
 		parts = append(parts, `"RTSP/1.0 200 OK"`)
+	case "dvr":
+		parts = append(parts, `title:"DVR" http.title:"DVR"`)
+	case "nvr":
+		parts = append(parts, `title:"NVR" http.title:"NVR"`)
 	case "webcamxp":
 		parts = append(parts, `server:"webcamXP"`)
 	case "yawcam":
 		parts = append(parts, `product:"Yawcam"`)
 	case "blueiris":
 		parts = append(parts, `title:"Blue Iris"`)
+	case "avtech":
+		parts = append(parts, `product:"AVTech" title:"DVR"`)
+	case "geovision":
+		parts = append(parts, `title:"GeoVision"`)
 	case "all":
-		// Broad search across multiple camera types
-		parts = append(parts, `(product:"webcam" OR title:"IP Camera" OR "RTSP/1.0" OR product:"Hikvision" OR product:"Dahua" OR product:"AXIS" OR server:"webcamXP")`)
+		// Broad search across all CCTV/surveillance camera types
+		parts = append(parts, `(title:"IP Camera" OR "RTSP/1.0" OR product:"Hikvision" OR product:"Dahua" OR product:"AXIS" OR title:"DVR" OR title:"NVR" OR server:"webcamXP" OR title:"Network Camera" OR title:"CCTV")`)
 	default:
-		// Default: generic webcam search
-		parts = append(parts, `webcam`)
+		// Default: CCTV / IP surveillance cameras
+		parts = append(parts, `(title:"IP Camera" OR title:"Network Camera" OR title:"DVR" OR title:"NVR" OR title:"CCTV" OR product:"Hikvision" OR product:"Dahua")`)
 	}
 
 	// Location filters
