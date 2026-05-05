@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="https://img.shields.io/badge/Go-1.21+-00ADD8?style=for-the-badge&logo=go&logoColor=white" alt="Go 1.21+">
+  <img src="https://img.shields.io/badge/Go-1.24+-00ADD8?style=for-the-badge&logo=go&logoColor=white" alt="Go 1.24+">
   <img src="https://img.shields.io/badge/Shodan-API-C63A16?style=for-the-badge&logo=shodan&logoColor=white" alt="Shodan">
   <img src="https://img.shields.io/badge/Minimax-M2.7_AI-7B61FF?style=for-the-badge" alt="Minimax M2.7">
   <img src="https://img.shields.io/badge/Discord-Webhooks-5865F2?style=for-the-badge&logo=discord&logoColor=white" alt="Discord">
@@ -29,11 +29,12 @@
 |---|---|
 | 🔍 **Shodan Discovery** | Find CCTV & IP cameras by country, state, or city |
 | 🤖 **AI Security Analysis** | Minimax M2.7 evaluates each camera's security posture passively |
+| 📊 **Real-Time Dashboard** | Live web dashboard at `:9847` with split findings/logs panels, drill-down details, and raw AI response viewer |
+| 🔐 **Auth-Bypass Validation** | Cameras behind authentication are NOT marked vulnerable unless a confirmed bypass exists |
 | 🔔 **Discord Alerts** | Real-time webhook notifications for High/Critical risk cameras with default credentials |
-| 🔄 **Daemon Mode** | Run as a 24/7 systemd service with configurable scan intervals |
+| 🔄 **Daemon Mode** | Run as a systemd service — dashboard-only (default) or with periodic scan intervals |
 | 🛡️ **Deduplication** | In-memory 24h TTL cache prevents duplicate alerts across scan cycles |
 | 🎯 **Camera Type Filters** | Hikvision, Dahua, Axis, DVR, NVR, AVTech, GeoVision, RTSP, and more |
-| 📊 **Risk Scoring** | Color-coded risk levels — Critical, High, Medium, Low |
 | 📦 **Output Formats** | Pretty table or JSON |
 | ⚡ **Concurrent Analysis** | Parallel AI processing with built-in rate limiting |
 | 🔁 **Resilient Retries** | Exponential backoff with `Retry-After` handling for all APIs |
@@ -44,14 +45,14 @@
 
 ### Prerequisites
 
-- **Go 1.21+**
+- **Go 1.24+**
 - [Shodan API Key](https://account.shodan.io/) (paid membership recommended for search)
 - [Minimax API Key](https://platform.minimax.io/) (Token Plan or Pay-As-You-Go)
 - [Discord Webhook](https://support.discord.com/hc/en-us/articles/228383668) (optional, for alerts)
 
 ### Install
 
-**One-liner** (requires Go 1.21+):
+**One-liner** (requires Go 1.24+):
 
 ```bash
 go install github.com/xalgord/camscan@latest
@@ -132,7 +133,10 @@ camscan --country IN
 ### Daemon Mode (24/7 Monitoring)
 
 ```bash
-# Run continuously, scan every 30 minutes
+# Dashboard-only (default): one scan, then dashboard stays alive at :9847
+camscan --country IN --daemon
+
+# Periodic scanning: rescan every 30 minutes
 camscan --country IN --daemon --interval 30m
 
 # Custom interval with Discord alerts
@@ -141,10 +145,23 @@ camscan --country US --type hikvision --daemon --interval 1h \
 ```
 
 In daemon mode:
-- ANSI colors and emojis are disabled for clean `journald` output
+- **Dashboard** is served at `http://localhost:9847` with live SSE updates
+- Default (`--interval 0`): runs one scan, then keeps the dashboard alive indefinitely
+- With `--interval`: scans periodically and pushes new findings to the dashboard
+- ANSI colors are disabled for clean `journald` output
 - A deduplication cache prevents re-alerting the same camera within 24 hours
-- Shodan credits are checked before each scan cycle
 - Graceful shutdown on `SIGINT`/`SIGTERM`
+
+### Real-Time Dashboard
+
+The web dashboard (`http://localhost:9847`) provides:
+
+| Panel | Description |
+|---|---|
+| **Findings** (left) | Security findings sorted by risk score — click any finding for drill-down |
+| **Event Logs** (right) | Live scan telemetry, analysis events, and error messages |
+| **Detail Panel** | Tabbed view with **Analysis** (vulns, CVEs, auth, exploit paths) and **Raw Response** (unprocessed AI output) |
+| **Stats Bar** | Live camera count, alert totals, severity breakdown, uptime |
 
 ---
 
@@ -164,7 +181,7 @@ In daemon mode:
 | `--no-ai` | | Skip Minimax AI analysis | `false` |
 | `--webhook` | | Discord webhook URL (overrides `DISCORD_WEBHOOK_URL` env) | — |
 | `--daemon` | | Run continuously in daemon mode | `false` |
-| `--interval` | | Scan interval in daemon mode | `30m` |
+| `--interval` | | Scan interval in daemon mode (`0` = dashboard-only) | `0` |
 | `--version` | | Print version and exit | — |
 
 ### Camera Types
@@ -246,8 +263,11 @@ SHODAN_API_KEY=your_key
 MINIMAX_API_KEY=your_key
 DISCORD_WEBHOOK_URL=https://discord.com/api/webhooks/...
 
-# Define what to scan — these are the CLI args passed to the binary
-CAMSCAN_ARGS=--country IN --type hikvision --daemon --interval 1h --limit 50
+# Dashboard-only (default): single scan, dashboard stays alive
+CAMSCAN_ARGS=--country IN --daemon --limit 50 --type all
+
+# For periodic scanning, add --interval:
+# CAMSCAN_ARGS=--country IN --daemon --interval 30m --limit 50 --type all
 ```
 
 ### 3. Start the Service
@@ -291,11 +311,16 @@ camscan/
 │   │   └── types.go               # Shodan response types
 │   ├── minimax/
 │   │   ├── client.go              # Minimax M2.7 AI client (retry + JSON extraction)
-│   │   └── types.go               # AI request/response types
+│   │   └── types.go               # AI request/response types + SecurityAssessment
 │   ├── discord/
 │   │   └── notifier.go            # Discord webhook (retry + rate-limit handling)
 │   ├── analyzer/
 │   │   └── analyzer.go            # Orchestrator: parallel AI + sequential alerts
+│   ├── dashboard/
+│   │   ├── server.go              # HTTP server + SSE event streaming
+│   │   ├── hub.go                 # Pub/sub event hub for real-time updates
+│   │   └── assets/
+│   │       └── index.html         # Split-panel dashboard UI
 │   ├── output/
 │   │   └── formatter.go           # Table/JSON formatters
 │   ├── risk/
@@ -314,6 +339,7 @@ camscan/
 
 | Concern | Implementation |
 |---|---|
+| **False-Positive Prevention** | Auth-protected cameras without confirmed bypass are capped at Medium risk, never Critical/High |
 | **Rate Limits** | Exponential backoff with `Retry-After` header support (Minimax + Discord) |
 | **API Credits** | Pre-flight Shodan credit check before each scan cycle |
 | **Deduplication** | Thread-safe in-memory cache with 24h TTL (daemon mode) |
@@ -323,6 +349,7 @@ camscan/
 | **Log Hygiene** | ANSI colors/emojis stripped in daemon mode for clean journald output |
 | **JSON Safety** | Robust first-`{` / last-`}` JSON extraction from AI responses |
 | **UTF-8 Safety** | Rune-aware string truncation prevents multi-byte corruption |
+| **Raw Response Audit** | Full unprocessed AI output available in the dashboard for manual verification |
 
 ---
 
