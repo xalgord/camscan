@@ -6,6 +6,7 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"runtime/debug"
 	"strings"
 	"sync"
 	"syscall"
@@ -23,8 +24,21 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// Version is set at build time via ldflags.
-var Version = "dev"
+// version is set at build time via ldflags:
+//
+//	go build -ldflags "-X github.com/xalgord/camscan/cmd.version=v1.2.0"
+var version string
+
+// Version returns the build version, preferring ldflags > go install module info > "dev".
+var Version = func() string {
+	if version != "" {
+		return version
+	}
+	if info, ok := debug.ReadBuildInfo(); ok && info.Main.Version != "" && info.Main.Version != "(devel)" {
+		return info.Main.Version
+	}
+	return "dev"
+}()
 
 var (
 	country    string
