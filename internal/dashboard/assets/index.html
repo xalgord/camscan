@@ -8,76 +8,81 @@
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
 :root{--bg:#0a0e17;--surface:#111827;--surface2:#1a2332;--border:#1e293b;--text:#e2e8f0;--text2:#94a3b8;--accent:#6366f1;--red:#ef4444;--orange:#f97316;--yellow:#eab308;--green:#22c55e;--cyan:#06b6d4}
-body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-height:100vh;overflow-x:hidden}
-.header{background:linear-gradient(135deg,rgba(99,102,241,.15),rgba(6,182,212,.1));border-bottom:1px solid var(--border);padding:16px 24px;display:flex;align-items:center;justify-content:space-between;backdrop-filter:blur(20px);position:sticky;top:0;z-index:100}
-.header h1{font-size:20px;font-weight:700;background:linear-gradient(135deg,#818cf8,#06b6d4);-webkit-background-clip:text;-webkit-text-fill-color:transparent}
+body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);height:100vh;overflow:hidden;display:flex;flex-direction:column}
+.header{background:linear-gradient(135deg,rgba(99,102,241,.15),rgba(6,182,212,.1));border-bottom:1px solid var(--border);padding:12px 20px;display:flex;align-items:center;justify-content:space-between;flex-shrink:0}
+.header h1{font-size:18px;font-weight:700;background:linear-gradient(135deg,#818cf8,#06b6d4);-webkit-background-clip:text;-webkit-text-fill-color:transparent}
 .header .status{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--text2)}
 .status .dot{width:8px;height:8px;border-radius:50%;background:var(--green);animation:pulse 2s infinite}
 .status.scanning .dot{background:var(--cyan);animation:pulse 1s infinite}
 @keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
-.stats-bar{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:12px;padding:16px 24px;border-bottom:1px solid var(--border)}
-.stat-card{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:14px 16px;text-align:center;transition:transform .2s}
-.stat-card:hover{transform:translateY(-2px)}
-.stat-card .value{font-size:28px;font-weight:700;font-family:'JetBrains Mono',monospace}
-.stat-card .label{font-size:11px;color:var(--text2);text-transform:uppercase;letter-spacing:.5px;margin-top:4px}
-.stat-card.critical .value{color:var(--red)}
-.stat-card.high .value{color:var(--orange)}
-.stat-card.medium .value{color:var(--yellow)}
-.stat-card.low .value{color:var(--green)}
-.stat-card.total .value{color:var(--cyan)}
-.stat-card.alerts .value{color:#a78bfa}
-.controls{display:flex;align-items:center;gap:12px;padding:12px 24px;border-bottom:1px solid var(--border);background:var(--surface)}
-.controls button{background:var(--surface2);border:1px solid var(--border);color:var(--text2);padding:6px 14px;border-radius:6px;cursor:pointer;font-size:12px;font-family:'Inter',sans-serif;transition:all .2s}
-.controls button:hover{border-color:var(--accent);color:var(--text)}
-.controls button.active{background:var(--accent);border-color:var(--accent);color:#fff}
-.controls .query{margin-left:auto;font-family:'JetBrains Mono',monospace;font-size:12px;color:var(--text2);max-width:400px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.log-container{padding:12px 24px;display:flex;flex-direction:column;gap:6px;padding-bottom:80px}
-.log-entry{display:flex;gap:12px;padding:10px 14px;border-radius:8px;background:var(--surface);border:1px solid var(--border);animation:slideIn .3s ease;font-size:13px;line-height:1.5}
-.log-entry.clickable{cursor:pointer;transition:all .2s}.log-entry.clickable:hover{background:var(--surface2);border-color:var(--accent);transform:translateX(4px)}
-@keyframes slideIn{from{opacity:0;transform:translateY(-8px)}to{opacity:1;transform:translateY(0)}}
-.log-entry .time{font-family:'JetBrains Mono',monospace;color:var(--text2);font-size:11px;white-space:nowrap;min-width:70px;padding-top:1px}
-.log-entry .icon{font-size:16px;min-width:20px;text-align:center}
-.log-entry .content{flex:1;word-break:break-word}
-.log-entry .content .title{font-weight:600;margin-bottom:2px}
-.log-entry .content .detail{color:var(--text2);font-size:12px}
-.log-entry .badge{font-size:11px;padding:2px 8px;border-radius:4px;font-weight:600;text-transform:uppercase;white-space:nowrap;height:fit-content}
+.stats-bar{display:grid;grid-template-columns:repeat(6,1fr);gap:8px;padding:10px 20px;border-bottom:1px solid var(--border);flex-shrink:0}
+.stat-card{background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:10px;text-align:center}
+.stat-card .value{font-size:22px;font-weight:700;font-family:'JetBrains Mono',monospace}
+.stat-card .label{font-size:10px;color:var(--text2);text-transform:uppercase;letter-spacing:.5px;margin-top:2px}
+.stat-card.critical .value{color:var(--red)}.stat-card.high .value{color:var(--orange)}.stat-card.medium .value{color:var(--yellow)}.stat-card.low .value{color:var(--green)}.stat-card.total .value{color:var(--cyan)}.stat-card.alerts .value{color:#a78bfa}
+.main{display:grid;grid-template-columns:1fr 1fr;flex:1;overflow:hidden}
+.panel{display:flex;flex-direction:column;overflow:hidden;border-right:1px solid var(--border)}
+.panel:last-child{border-right:none}
+.panel-header{padding:10px 16px;border-bottom:1px solid var(--border);background:var(--surface);display:flex;align-items:center;justify-content:space-between;flex-shrink:0}
+.panel-header h2{font-size:14px;font-weight:600;display:flex;align-items:center;gap:6px}
+.panel-header .count{font-family:'JetBrains Mono',monospace;font-size:11px;background:var(--surface2);padding:2px 8px;border-radius:4px;color:var(--text2)}
+.panel-body{flex:1;overflow-y:auto;padding:8px}
+.finding{background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:12px;margin-bottom:8px;cursor:pointer;transition:all .2s}
+.finding:hover{border-color:var(--accent);transform:translateX(2px)}
+.finding .f-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:6px}
+.finding .f-ip{font-family:'JetBrains Mono',monospace;font-size:13px;font-weight:600}
+.finding .f-product{font-size:12px;color:var(--text2)}
+.finding .f-summary{font-size:12px;color:var(--text2);line-height:1.4;margin-top:4px}
+.finding .f-meta{display:flex;gap:8px;margin-top:6px;font-size:11px;color:var(--text2)}
+.finding .f-meta span{display:flex;align-items:center;gap:3px}
+.badge{font-size:10px;padding:2px 8px;border-radius:4px;font-weight:600;text-transform:uppercase;white-space:nowrap}
 .badge.critical{background:rgba(239,68,68,.15);color:var(--red);border:1px solid rgba(239,68,68,.3)}
 .badge.high{background:rgba(249,115,22,.15);color:var(--orange);border:1px solid rgba(249,115,22,.3)}
 .badge.medium{background:rgba(234,179,8,.15);color:var(--yellow);border:1px solid rgba(234,179,8,.3)}
 .badge.low{background:rgba(34,197,94,.15);color:var(--green);border:1px solid rgba(34,197,94,.3)}
 .badge.info{background:rgba(6,182,212,.15);color:var(--cyan);border:1px solid rgba(6,182,212,.3)}
-.log-entry.scan-start{border-left:3px solid var(--cyan)}
-.log-entry.scan-complete{border-left:3px solid var(--green)}
-.log-entry.alert{border-left:3px solid var(--red)}
-.log-entry.camera{border-left:3px solid var(--accent)}
-.log-entry.error{border-left:3px solid var(--red)}
-.empty-state{text-align:center;padding:80px 24px;color:var(--text2)}
-.empty-state .icon{font-size:48px;margin-bottom:16px;opacity:.5}
-.empty-state p{font-size:14px}
-.uptime{font-family:'JetBrains Mono',monospace;font-size:12px}
-/* Detail Panel */
-.overlay{position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:200;opacity:0;pointer-events:none;transition:opacity .3s}
+.badge.unknown{background:rgba(148,163,184,.15);color:var(--text2);border:1px solid rgba(148,163,184,.3)}
+.log-entry{display:flex;gap:8px;padding:6px 10px;border-radius:6px;font-size:12px;line-height:1.4;animation:slideIn .3s ease}
+.log-entry+.log-entry{margin-top:4px}
+@keyframes slideIn{from{opacity:0;transform:translateY(-4px)}to{opacity:1;transform:translateY(0)}}
+.log-entry .time{font-family:'JetBrains Mono',monospace;color:var(--text2);font-size:10px;white-space:nowrap;min-width:60px;padding-top:1px}
+.log-entry .icon{font-size:12px;min-width:16px}
+.log-entry .msg{flex:1;word-break:break-word;color:var(--text2)}
+.log-entry.err .msg{color:var(--red)}
+.log-entry.scan .msg{color:var(--cyan)}
+.empty{text-align:center;padding:40px;color:var(--text2);font-size:13px}
+/* Detail overlay */
+.overlay{position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:200;opacity:0;pointer-events:none;transition:opacity .3s}
 .overlay.open{opacity:1;pointer-events:auto}
-.detail-panel{position:fixed;top:0;right:-520px;width:500px;max-width:90vw;height:100vh;background:var(--bg);border-left:1px solid var(--border);z-index:300;transition:right .3s ease;overflow-y:auto;display:flex;flex-direction:column}
+.detail-panel{position:fixed;top:0;right:-560px;width:540px;max-width:92vw;height:100vh;background:var(--bg);border-left:1px solid var(--border);z-index:300;transition:right .3s ease;overflow-y:auto;display:flex;flex-direction:column}
 .detail-panel.open{right:0}
-.dp-header{padding:16px 20px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center;position:sticky;top:0;background:var(--bg);z-index:1}
-.dp-header h2{font-size:16px;font-weight:700;display:flex;align-items:center;gap:8px}
-.dp-close{background:none;border:1px solid var(--border);color:var(--text2);width:32px;height:32px;border-radius:6px;cursor:pointer;font-size:16px;display:flex;align-items:center;justify-content:center;transition:all .2s}
+.dp-header{padding:14px 18px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center;position:sticky;top:0;background:var(--bg);z-index:1}
+.dp-header h2{font-size:15px;font-weight:700;display:flex;align-items:center;gap:8px}
+.dp-close{background:none;border:1px solid var(--border);color:var(--text2);width:28px;height:28px;border-radius:6px;cursor:pointer;font-size:14px;display:flex;align-items:center;justify-content:center}
 .dp-close:hover{border-color:var(--red);color:var(--red)}
-.dp-body{padding:16px 20px;flex:1;display:flex;flex-direction:column;gap:16px}
-.dp-section{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:14px 16px}
-.dp-section h3{font-size:13px;text-transform:uppercase;letter-spacing:.5px;color:var(--text2);margin-bottom:10px;display:flex;align-items:center;gap:6px}
-.dp-kv{display:grid;grid-template-columns:auto 1fr;gap:6px 12px;font-size:13px}
+.dp-tabs{display:flex;border-bottom:1px solid var(--border);padding:0 18px;flex-shrink:0}
+.dp-tab{padding:8px 16px;font-size:12px;font-weight:500;color:var(--text2);cursor:pointer;border-bottom:2px solid transparent;transition:all .2s}
+.dp-tab:hover{color:var(--text)}
+.dp-tab.active{color:var(--accent);border-bottom-color:var(--accent)}
+.dp-body{padding:14px 18px;flex:1;display:flex;flex-direction:column;gap:12px}
+.dp-section{background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:12px 14px}
+.dp-section h3{font-size:12px;text-transform:uppercase;letter-spacing:.5px;color:var(--text2);margin-bottom:8px;display:flex;align-items:center;gap:6px}
+.dp-kv{display:grid;grid-template-columns:auto 1fr;gap:4px 10px;font-size:12px}
 .dp-kv dt{color:var(--text2);white-space:nowrap}
-.dp-kv dd{font-family:'JetBrains Mono',monospace;font-size:12px;word-break:break-all}
-.dp-tag{display:inline-block;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600;margin:2px}
+.dp-kv dd{font-family:'JetBrains Mono',monospace;font-size:11px;word-break:break-all}
+.dp-tag{display:inline-block;padding:2px 6px;border-radius:4px;font-size:10px;font-weight:600;margin:2px}
 .dp-tag.cve{background:rgba(239,68,68,.12);color:var(--red);border:1px solid rgba(239,68,68,.25)}
 .dp-tag.exploit{background:rgba(249,115,22,.12);color:var(--orange);border:1px solid rgba(249,115,22,.25)}
-.dp-vuln{padding:10px 12px;border-radius:6px;background:var(--surface2);border:1px solid var(--border);margin-bottom:8px}
-.dp-vuln .v-title{font-weight:600;font-size:13px;margin-bottom:4px}
-.dp-vuln .v-desc{color:var(--text2);font-size:12px;line-height:1.5}
-.dp-score-bar{height:6px;border-radius:3px;background:var(--surface2);overflow:hidden;margin-top:6px}
+.dp-vuln{padding:8px 10px;border-radius:6px;background:var(--surface2);border:1px solid var(--border);margin-bottom:6px}
+.dp-vuln .v-title{font-weight:600;font-size:12px;margin-bottom:3px}
+.dp-vuln .v-desc{color:var(--text2);font-size:11px;line-height:1.4}
+.dp-score-bar{height:5px;border-radius:3px;background:var(--surface2);overflow:hidden;margin-top:4px}
 .dp-score-fill{height:100%;border-radius:3px;transition:width .5s ease}
+.dp-raw{background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:14px;font-family:'JetBrains Mono',monospace;font-size:11px;line-height:1.5;white-space:pre-wrap;word-break:break-all;max-height:100%;overflow-y:auto;color:var(--text2)}
+.controls-row{display:flex;gap:6px;align-items:center}
+.controls-row button{background:var(--surface2);border:1px solid var(--border);color:var(--text2);padding:4px 10px;border-radius:4px;cursor:pointer;font-size:11px;font-family:'Inter',sans-serif}
+.controls-row button:hover{border-color:var(--accent);color:var(--text)}
+.uptime{font-family:'JetBrains Mono',monospace;font-size:11px}
 </style>
 </head>
 <body>
@@ -93,167 +98,196 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
   <div class="stat-card medium"><div class="value" id="sMed">0</div><div class="label">Medium</div></div>
   <div class="stat-card low"><div class="value" id="sLow">0</div><div class="label">Low</div></div>
 </div>
-<div class="controls">
-  <button id="btnAll" class="active" onclick="setFilter('all')">All</button>
-  <button id="btnAlert" onclick="setFilter('alert')">Alerts</button>
-  <button id="btnCamera" onclick="setFilter('camera')">Analysis</button>
-  <button id="btnScan" onclick="setFilter('scan')">Scans</button>
-  <button id="btnPause" onclick="togglePause()">⏸ Pause</button>
-  <button onclick="clearLogs()">🗑 Clear</button>
-  <div class="query" id="currentQuery"></div>
-</div>
-<div class="log-container" id="logs">
-  <div class="empty-state"><div class="icon">📡</div><p>Waiting for scan events...<br>Start a scan to see real-time results here.</p></div>
+<div class="main">
+  <div class="panel">
+    <div class="panel-header"><h2>🛡️ Findings</h2><span class="count" id="findingCount">0</span></div>
+    <div class="panel-body" id="findings"><div class="empty">No findings yet. Start a scan...</div></div>
+  </div>
+  <div class="panel">
+    <div class="panel-header">
+      <h2>📋 Logs</h2>
+      <div class="controls-row">
+        <button onclick="clearLogs()">Clear</button>
+        <span class="count" id="logCount">0</span>
+      </div>
+    </div>
+    <div class="panel-body" id="logs"></div>
+  </div>
 </div>
 <div class="overlay" id="overlay" onclick="closePanel()"></div>
 <div class="detail-panel" id="detailPanel">
-  <div class="dp-header"><h2 id="dpTitle">🔍 Analysis Detail</h2><button class="dp-close" onclick="closePanel()">✕</button></div>
+  <div class="dp-header"><h2 id="dpTitle">🔍 Detail</h2><button class="dp-close" onclick="closePanel()">✕</button></div>
+  <div class="dp-tabs" id="dpTabs">
+    <div class="dp-tab active" onclick="switchTab('analysis')">Analysis</div>
+    <div class="dp-tab" onclick="switchTab('raw')">Raw Response</div>
+  </div>
   <div class="dp-body" id="dpBody"></div>
 </div>
 <script>
-const logs=document.getElementById('logs'),MAX=500;
-let entries=[],filter='all',paused=false,autoScroll=true,started=false;
-let scanActive=false;
-const detailStore={};// ip:port -> analysis payload
-
-function setFilter(f){
-  filter=f;
-  document.querySelectorAll('.controls button[id^="btn"]').forEach(b=>b.classList.remove('active'));
-  const btnId='btn'+f.charAt(0).toUpperCase()+f.slice(1);
-  const btn=document.getElementById(btnId);
-  if(btn)btn.classList.add('active');
-  entries.forEach(e=>{e.el.style.display=(f==='all'||e.cat===f)?'':'none'});
-}
-
-function togglePause(){paused=!paused;document.getElementById('btnPause').textContent=paused?'▶ Resume':'⏸ Pause';
-document.getElementById('btnPause').classList.toggle('active',paused)}
-
-function clearLogs(){logs.innerHTML='';entries=[]}
+const findingsEl=document.getElementById('findings'),logsEl=document.getElementById('logs');
+let findingsData=[],logCount=0,started=false,activeTab='analysis',currentKey=null;
+const detailStore={};
 
 function fmtTime(ts){
-  if(!ts)return new Date().toLocaleTimeString('en-US',{hour12:false,hour:'2-digit',minute:'2-digit',second:'2-digit'});
-  const d=new Date(ts);
+  const d=ts?new Date(ts):new Date();
   return d.toLocaleTimeString('en-US',{hour12:false,hour:'2-digit',minute:'2-digit',second:'2-digit'});
 }
-
-function fmtUptime(s){const h=Math.floor(s/3600),m=Math.floor((s%3600)/60),sec=Math.floor(s%60);
-return (h>0?h+'h ':'')+(m>0?m+'m ':'')+sec+'s'}
-
-function addEntry(html,cat,clickKey){
-  if(!started){logs.innerHTML='';started=true}
-  if(paused)return;
-  const div=document.createElement('div');div.innerHTML=html;const el=div.firstChild;
-  el.style.display=(filter==='all'||filter===cat)?'':'none';
-  if(clickKey){el.classList.add('clickable');el.onclick=()=>openPanel(clickKey)}
-  logs.appendChild(el);
-  const entry={el,cat};entries.push(entry);
-  while(entries.length>MAX){entries[0].el.remove();entries.shift()}
-  if(autoScroll)window.scrollTo({top:document.body.scrollHeight,behavior:'smooth'});
-}
-
-function badge(level){const l=(level||'info').toLowerCase();return `<span class="badge ${l}">${level}</span>`}
-function msg(d){return typeof d==='string'?d:(d&&d.message?d.message:JSON.stringify(d))}
+function fmtUptime(s){const h=Math.floor(s/3600),m=Math.floor((s%3600)/60),sec=Math.floor(s%60);return(h>0?h+'h ':'')+(m>0?m+'m ':'')+sec+'s'}
 function esc(s){const d=document.createElement('div');d.textContent=s;return d.innerHTML}
-
-function detectRiskLevel(text){
-  const t=(text||'').toLowerCase();
-  if(t.includes('critical'))return 'Critical';
-  if(t.includes('high'))return 'High';
-  if(t.includes('medium'))return 'Medium';
-  if(t.includes('low'))return 'Low';
-  return null;
-}
-
+function badge(level){const l=(level||'unknown').toLowerCase();return '<span class="badge '+l+'">'+level+'</span>'}
 function scoreColor(s){if(s>=80)return'var(--red)';if(s>=60)return'var(--orange)';if(s>=40)return'var(--yellow)';return'var(--green)'}
 
+function addLog(icon,msg,cls){
+  if(!started){logsEl.innerHTML='';started=true}
+  const t=fmtTime();
+  const div=document.createElement('div');
+  div.className='log-entry'+(cls?' '+cls:'');
+  div.innerHTML='<span class="time">'+t+'</span><span class="icon">'+icon+'</span><span class="msg">'+esc(msg)+'</span>';
+  logsEl.appendChild(div);
+  logCount++;
+  document.getElementById('logCount').textContent=logCount;
+  logsEl.scrollTop=logsEl.scrollHeight;
+}
+
+function addFinding(key,data){
+  const a=data.assessment,c=data.camera;
+  if(!a)return;
+  const existing=document.getElementById('f-'+CSS.escape(key));
+  if(existing)existing.remove();
+
+  const product=c.product||'Unknown';
+  const loc=(c.city||'')+(c.country?', '+c.country:'');
+  const vulnCount=(a.vulnerabilities||[]).length;
+  const cveCount=(a.cve_references||[]).length;
+
+  const div=document.createElement('div');
+  div.className='finding';
+  div.id='f-'+key;
+  div.onclick=function(){openPanel(key)};
+  div.innerHTML='<div class="f-head"><span class="f-ip">'+esc(c.ip)+':'+c.port+'</span>'+badge(a.risk_level)+'</div>'+
+    '<div class="f-product">'+esc(product)+(loc?' — '+esc(loc):'')+'</div>'+
+    '<div class="f-summary">'+esc(a.summary||'No summary')+'</div>'+
+    '<div class="f-meta"><span>Score: <b>'+a.risk_score+'/100</b></span>'+
+    (vulnCount?'<span>🛡 '+vulnCount+' vulns</span>':'')+
+    (cveCount?'<span>📋 '+cveCount+' CVEs</span>':'')+
+    '<span>'+(a.is_open?'🔓 Open':'🔒 Auth')+'</span></div>';
+
+  const parent=document.getElementById('findings');
+  if(findingsData.length===0)parent.innerHTML='';
+  
+  // Insert sorted by risk score (highest first)
+  let inserted=false;
+  for(let i=0;i<parent.children.length;i++){
+    const existingKey=parent.children[i].id.replace('f-','');
+    const existingData=detailStore[existingKey];
+    if(existingData&&existingData.assessment.risk_score<a.risk_score){
+      parent.insertBefore(div,parent.children[i]);inserted=true;break;
+    }
+  }
+  if(!inserted)parent.appendChild(div);
+  
+  findingsData.push(key);
+  document.getElementById('findingCount').textContent=findingsData.length;
+}
+
+function switchTab(tab){
+  activeTab=tab;
+  document.querySelectorAll('.dp-tab').forEach(t=>t.classList.remove('active'));
+  document.querySelectorAll('.dp-tab').forEach(t=>{if(t.textContent.toLowerCase().includes(tab))t.classList.add('active')});
+  if(currentKey)renderPanel(currentKey);
+}
+
 function openPanel(key){
-  const p=detailStore[key];if(!p)return;
-  const a=p.assessment,c=p.camera;
-  document.getElementById('dpTitle').innerHTML=`🔍 ${esc(c.ip)}:${c.port}`;
-  let h='';
-  // Risk score
-  h+=`<div class="dp-section"><h3>⚡ Risk Assessment</h3>`;
-  h+=`<div style="display:flex;align-items:center;gap:12px;margin-bottom:8px"><span style="font-size:32px;font-weight:700;color:${scoreColor(a.risk_score)}">${a.risk_score}</span><span style="font-size:14px;color:var(--text2)">/100</span>${badge(a.risk_level)}</div>`;
-  h+=`<div class="dp-score-bar"><div class="dp-score-fill" style="width:${a.risk_score}%;background:${scoreColor(a.risk_score)}"></div></div>`;
-  h+=`<p style="margin-top:10px;font-size:13px;color:var(--text2)">${esc(a.summary||'')}</p></div>`;
-  // Camera info
-  h+=`<div class="dp-section"><h3>📷 Camera Info</h3><dl class="dp-kv">`;
-  h+=`<dt>IP:Port</dt><dd>${esc(c.ip)}:${c.port}</dd>`;
-  if(c.product)h+=`<dt>Product</dt><dd>${esc(c.product)}</dd>`;
-  if(c.org)h+=`<dt>Org</dt><dd>${esc(c.org)}</dd>`;
-  if(c.city||c.country)h+=`<dt>Location</dt><dd>${esc((c.city||'')+', '+(c.country||''))}</dd>`;
-  h+=`<dt>Open</dt><dd>${a.is_open?'✅ Yes':'❌ No'}</dd>`;
-  h+=`<dt>Default Creds</dt><dd>${a.default_creds?'⚠️ Yes':'🔒 No'}</dd>`;
-  h+=`</dl></div>`;
-  // Attack surface
-  if(a.attack_surface){
-    const as=a.attack_surface;
-    h+=`<div class="dp-section"><h3>🎯 Attack Surface</h3><dl class="dp-kv">`;
-    if(as.banner)h+=`<dt>Banner</dt><dd>${esc(as.banner)}</dd>`;
-    if(as.server_header)h+=`<dt>Server</dt><dd>${esc(as.server_header)}</dd>`;
-    if(as.ssl_info)h+=`<dt>SSL</dt><dd>${esc(as.ssl_info)}</dd>`;
-    if(as.open_ports&&as.open_ports.length)h+=`<dt>Ports</dt><dd>${as.open_ports.join(', ')}</dd>`;
-    if(as.web_endpoints&&as.web_endpoints.length)h+=`<dt>Endpoints</dt><dd>${as.web_endpoints.map(esc).join(', ')}</dd>`;
-    h+=`</dl></div>`;
-  }
-  // Auth analysis
-  if(a.auth_analysis){
-    const aa=a.auth_analysis;
-    h+=`<div class="dp-section"><h3>🔑 Authentication</h3><dl class="dp-kv">`;
-    if(aa.mechanism)h+=`<dt>Mechanism</dt><dd>${esc(aa.mechanism)}</dd>`;
-    if(aa.default_creds_tested&&aa.default_creds_tested.length)h+=`<dt>Tested</dt><dd>${aa.default_creds_tested.map(esc).join(', ')}</dd>`;
-    h+=`<dt>Bypass Possible</dt><dd>${aa.bypass_possible?'⚠️ Yes':'No'}</dd>`;
-    if(aa.bypass_method)h+=`<dt>Method</dt><dd>${esc(aa.bypass_method)}</dd>`;
-    h+=`</dl></div>`;
-  }
-  // Vulnerabilities
-  if(a.vulns&&a.vulns.length){
-    h+=`<div class="dp-section"><h3>🛡️ Vulnerabilities (${a.vulns.length})</h3>`;
-    a.vulns.forEach(v=>{
-      h+=`<div class="dp-vuln"><div class="v-title">${esc(v.title||'Unknown')} ${v.severity?badge(v.severity):''}</div>`;
-      if(v.cve_id)h+=`<span class="dp-tag cve">${esc(v.cve_id)}</span> `;
-      if(v.description)h+=`<div class="v-desc">${esc(v.description)}</div>`;
-      if(v.remediation)h+=`<div class="v-desc" style="margin-top:4px;color:var(--green)">💡 ${esc(v.remediation)}</div>`;
-      h+=`</div>`;
-    });
-    h+=`</div>`;
-  }
-  // Exploit paths
-  if(a.exploit_paths&&a.exploit_paths.length){
-    h+=`<div class="dp-section"><h3>⚔️ Exploit Paths</h3>`;
-    a.exploit_paths.forEach(p=>{h+=`<div class="dp-tag exploit" style="display:block;margin-bottom:6px">${esc(p)}</div>`});
-    h+=`</div>`;
-  }
-  // CVEs
-  if(a.cve_references&&a.cve_references.length){
-    h+=`<div class="dp-section"><h3>📋 CVE References</h3><div>`;
-    a.cve_references.forEach(c=>{h+=`<a href="https://nvd.nist.gov/vuln/detail/${esc(c)}" target="_blank" class="dp-tag cve" style="text-decoration:none">${esc(c)}</a> `});
-    h+=`</div></div>`;
-  }
-  // Access instructions — shown prominently
-  if(a.access_instructions&&a.access_instructions.length){
-    h+=`<div class="dp-section" style="border-color:var(--cyan)"><h3>🧭 How to Access / Verify</h3>`;
-    a.access_instructions.forEach((inst,i)=>{
-      h+=`<div style="padding:8px 12px;border-radius:6px;background:var(--surface2);border:1px solid var(--border);margin-bottom:6px;font-size:13px;line-height:1.6">`;
-      h+=`<span style="color:var(--cyan);font-weight:600">${i+1}.</span> ${esc(inst)}</div>`;
-    });
-    h+=`</div>`;
-  }
-  document.getElementById('dpBody').innerHTML=h;
+  currentKey=key;
+  renderPanel(key);
   document.getElementById('detailPanel').classList.add('open');
   document.getElementById('overlay').classList.add('open');
+}
+
+function renderPanel(key){
+  const p=detailStore[key];if(!p)return;
+  const a=p.assessment,c=p.camera;
+  document.getElementById('dpTitle').innerHTML='🔍 '+esc(c.ip)+':'+c.port;
+
+  if(activeTab==='raw'){
+    const raw=a.raw_response||JSON.stringify(a,null,2);
+    document.getElementById('dpBody').innerHTML='<div class="dp-raw">'+esc(raw)+'</div>';
+    return;
+  }
+
+  let h='';
+  h+='<div class="dp-section"><h3>⚡ Risk</h3>';
+  h+='<div style="display:flex;align-items:center;gap:10px;margin-bottom:6px"><span style="font-size:28px;font-weight:700;color:'+scoreColor(a.risk_score)+'">'+a.risk_score+'</span><span style="font-size:13px;color:var(--text2)">/100</span>'+badge(a.risk_level)+'</div>';
+  h+='<div class="dp-score-bar"><div class="dp-score-fill" style="width:'+a.risk_score+'%;background:'+scoreColor(a.risk_score)+'"></div></div>';
+  if(a.summary)h+='<p style="margin-top:8px;font-size:12px;color:var(--text2)">'+esc(a.summary)+'</p>';
+  h+='</div>';
+
+  h+='<div class="dp-section"><h3>📷 Camera</h3><dl class="dp-kv">';
+  h+='<dt>IP:Port</dt><dd>'+esc(c.ip)+':'+c.port+'</dd>';
+  if(c.product)h+='<dt>Product</dt><dd>'+esc(c.product)+'</dd>';
+  if(c.org)h+='<dt>Org</dt><dd>'+esc(c.org)+'</dd>';
+  if(c.city||c.country)h+='<dt>Location</dt><dd>'+esc((c.city||'')+', '+(c.country||''))+'</dd>';
+  h+='<dt>Open</dt><dd>'+(a.is_open?'✅ Yes':'❌ No')+'</dd>';
+  h+='<dt>Default Creds</dt><dd>'+(a.default_creds?'⚠️ Yes':'🔒 No')+'</dd>';
+  h+='</dl></div>';
+
+  if(a.auth_analysis){
+    const aa=a.auth_analysis;
+    h+='<div class="dp-section"><h3>🔑 Auth</h3><dl class="dp-kv">';
+    if(aa.auth_type)h+='<dt>Type</dt><dd>'+esc(aa.auth_type)+'</dd>';
+    if(aa.default_creds_tested&&aa.default_creds_tested.length)h+='<dt>Tested</dt><dd>'+aa.default_creds_tested.map(esc).join(', ')+'</dd>';
+    h+='<dt>Bypass</dt><dd>'+(aa.bypass_possible?'⚠️ Yes':'No')+'</dd>';
+    if(aa.bypass_method)h+='<dt>Method</dt><dd>'+esc(aa.bypass_method)+'</dd>';
+    h+='</dl></div>';
+  }
+
+  if(a.vulnerabilities&&a.vulnerabilities.length){
+    h+='<div class="dp-section"><h3>🛡️ Vulnerabilities ('+a.vulnerabilities.length+')</h3>';
+    a.vulnerabilities.forEach(function(v){
+      h+='<div class="dp-vuln"><div class="v-title">'+esc(v.title||v.id||'Unknown')+' '+badge(v.severity||'Unknown')+'</div>';
+      if(v.evidence)h+='<div class="v-desc" style="color:var(--cyan)">Evidence: '+esc(v.evidence)+'</div>';
+      if(v.detail)h+='<div class="v-desc">'+esc(v.detail)+'</div>';
+      if(v.remediation)h+='<div class="v-desc" style="color:var(--green)">💡 '+esc(v.remediation)+'</div>';
+      h+='</div>';
+    });
+    h+='</div>';
+  }
+
+  if(a.exploit_paths&&a.exploit_paths.length){
+    h+='<div class="dp-section"><h3>⚔️ Exploit Paths</h3>';
+    a.exploit_paths.forEach(function(p){h+='<div class="dp-tag exploit" style="display:block;margin-bottom:4px">'+esc(p)+'</div>'});
+    h+='</div>';
+  }
+
+  if(a.cve_references&&a.cve_references.length){
+    h+='<div class="dp-section"><h3>📋 CVEs</h3><div>';
+    a.cve_references.forEach(function(c){h+='<a href="https://nvd.nist.gov/vuln/detail/'+esc(c)+'" target="_blank" class="dp-tag cve" style="text-decoration:none">'+esc(c)+'</a> '});
+    h+='</div></div>';
+  }
+
+  if(a.access_instructions&&a.access_instructions.length){
+    h+='<div class="dp-section" style="border-color:var(--cyan)"><h3>🧭 Access / Verify</h3>';
+    a.access_instructions.forEach(function(inst,i){
+      h+='<div style="padding:6px 10px;border-radius:6px;background:var(--surface2);border:1px solid var(--border);margin-bottom:4px;font-size:12px;line-height:1.5">';
+      h+='<span style="color:var(--cyan);font-weight:600">'+(i+1)+'.</span> '+esc(inst)+'</div>';
+    });
+    h+='</div>';
+  }
+
+  document.getElementById('dpBody').innerHTML=h;
 }
 
 function closePanel(){
   document.getElementById('detailPanel').classList.remove('open');
   document.getElementById('overlay').classList.remove('open');
+  currentKey=null;
 }
-document.addEventListener('keydown',e=>{if(e.key==='Escape')closePanel()});
+document.addEventListener('keydown',function(e){if(e.key==='Escape')closePanel()});
+function clearLogs(){logsEl.innerHTML='';logCount=0;document.getElementById('logCount').textContent='0'}
 
 const es=new EventSource('/events');
 es.onmessage=function(e){
-  const ev=JSON.parse(e.data);const t=fmtTime(ev.timestamp);const d=ev.data;const m=msg(d);
-
+  const ev=JSON.parse(e.data);const d=ev.data;
   switch(ev.type){
   case 'stats':
     if(typeof d==='object'&&d!==null){
@@ -264,56 +298,32 @@ es.onmessage=function(e){
       document.getElementById('sMed').textContent=d.medium||0;
       document.getElementById('sLow').textContent=d.low||0;
       document.getElementById('uptime').textContent=fmtUptime(d.uptime_seconds||0);
-      const st=document.getElementById('status');
-      const stText=document.getElementById('statusText');
-      if(d.active_scan){st.className='status scanning';stText.textContent='Scanning...';}
-      else{st.className='status';stText.textContent='Idle';}
-      if(d.current_query)document.getElementById('currentQuery').textContent='Query: '+d.current_query;
+      if(d.active_scan){document.getElementById('status').className='status scanning';document.getElementById('statusText').textContent='Scanning...';}
+      else{document.getElementById('status').className='status';document.getElementById('statusText').textContent='Idle';}
     }
     break;
-  case 'scan_start':
-    scanActive=true;
-    document.getElementById('status').className='status scanning';
-    document.getElementById('statusText').textContent='Scanning...';
-    addEntry(`<div class="log-entry scan-start"><span class="time">${t}</span><span class="icon">🔍</span><div class="content"><div class="title">Scan Started</div><div class="detail">${m}</div></div>${badge('Info')}</div>`,'scan');
-    break;
-  case 'camera_found':
-    addEntry(`<div class="log-entry camera"><span class="time">${t}</span><span class="icon">📷</span><div class="content"><div class="title">Cameras Discovered</div><div class="detail">${m}</div></div>${badge('Info')}</div>`,'camera');
-    break;
-  case 'analysis':
-    const risk=detectRiskLevel(m);
-    const icons={'Critical':'🔴','High':'🟠','Medium':'🟡','Low':'🟢'};
-    const icon=risk?icons[risk]||'⚪':'🤖';
-    // Extract ip:port for clickable linking
-    const ipMatch=m.match(/(\d+\.\d+\.\d+\.\d+):(\d+)/);
-    const clickKey=ipMatch?ipMatch[0]:null;
-    addEntry(`<div class="log-entry camera"><span class="time">${t}</span><span class="icon">${icon}</span><div class="content"><div class="title">AI Analysis${clickKey?' — click for details':''}</div><div class="detail">${m}</div></div>${risk?badge(risk):''}</div>`,'camera',clickKey);
-    break;
+  case 'scan_start':addLog('🔍',typeof d==='string'?d:JSON.stringify(d),'scan');break;
+  case 'camera_found':addLog('📷',typeof d==='string'?d:JSON.stringify(d),'scan');break;
+  case 'analysis':addLog('🤖',typeof d==='string'?d:JSON.stringify(d));break;
   case 'analysis_detail':
     if(typeof d==='object'&&d.camera&&d.assessment){
-      const key=d.camera.ip+':'+d.camera.port;
+      var key=d.camera.ip+':'+d.camera.port;
       detailStore[key]=d;
+      addFinding(key,d);
     }
     break;
-  case 'alert_sent':
-    addEntry(`<div class="log-entry alert"><span class="time">${t}</span><span class="icon">🚨</span><div class="content"><div class="title">Discord Alert</div><div class="detail">${m}</div></div>${badge('Critical')}</div>`,'alert');
-    break;
+  case 'alert_sent':addLog('🚨',typeof d==='string'?d:JSON.stringify(d));break;
   case 'scan_complete':
-    scanActive=false;
+    addLog('✅',typeof d==='string'?d:JSON.stringify(d),'scan');
     document.getElementById('status').className='status';
     document.getElementById('statusText').textContent='Idle';
-    addEntry(`<div class="log-entry scan-complete"><span class="time">${t}</span><span class="icon">✅</span><div class="content"><div class="title">Scan Complete</div><div class="detail">${m}</div></div>${badge('Info')}</div>`,'scan');
     break;
-  case 'log':
-    addEntry(`<div class="log-entry"><span class="time">${t}</span><span class="icon">📝</span><div class="content"><div class="detail">${m}</div></div></div>`,'scan');
-    break;
-  case 'error':
-    addEntry(`<div class="log-entry error"><span class="time">${t}</span><span class="icon">❌</span><div class="content"><div class="title">Error</div><div class="detail">${m}</div></div>${badge('Critical')}</div>`,'alert');
-    break;
+  case 'log':addLog('📝',typeof d==='string'?d:JSON.stringify(d));break;
+  case 'error':addLog('❌',typeof d==='string'?d:JSON.stringify(d),'err');break;
   }
 };
 es.onerror=function(){
-  document.getElementById('statusText').textContent='Disconnected — Reconnecting...';
+  document.getElementById('statusText').textContent='Disconnected...';
   document.getElementById('status').className='status';
 };
 </script>

@@ -77,6 +77,7 @@ type SecurityAssessment struct {
 	ExploitPaths       []string        `json:"exploit_paths"`       // Concrete attack chains
 	CveReferences      []string        `json:"cve_references"`      // Related CVE IDs
 	AccessInstructions []string        `json:"access_instructions"` // How to actually access/verify (tool + URL + protocol)
+	RawResponse        string          `json:"raw_response,omitempty"` // Unprocessed AI response for debugging/inspection
 }
 
 // VulnTitles returns a flat string slice of vulnerability titles for backward compatibility.

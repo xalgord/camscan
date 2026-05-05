@@ -165,6 +165,13 @@ Risk level mapping:
 - If you cannot determine the actual page content from the banner, do NOT assume it is accessible. State "Verification needed" and cap at Medium.
 - HTTP 200 with empty body or HTML with no functional content = NOT open access.
 
+⚠️ AUTHENTICATION = NOT VULNERABLE RULE (MANDATORY):
+- If the camera requires authentication and you CANNOT confirm bypass or default credentials working, it is NOT VULNERABLE.
+- A login page (HTTP 401, HTTP 403, login form) means the device is PROTECTED. Do NOT list it as vulnerable just because it exists on the internet.
+- Only mark as vulnerable if: (a) no auth required (confirmed open access), OR (b) auth bypass confirmed via known CVE with evidence, OR (c) default credentials confirmed working.
+- "Might be using default credentials" is NOT confirmation. You must cite specific evidence from the banner.
+- If auth is required and no bypass is found: risk_level=Low, risk_score ≤ 20, is_open=false, vulnerabilities=[] (empty).
+
 Describe concrete EXPLOIT PATHS — step-by-step attack chains:
 e.g., "1. Browse to http://IP:PORT 2. No login required 3. Access live stream at /live/ch0 4. Access admin panel at /setup.cgi 5. Change admin password to lock out owner"
 
@@ -369,6 +376,9 @@ func (c *Client) parseResponse(body []byte) (*SecurityAssessment, error) {
 			}
 		}
 	}
+
+	// Attach raw AI response for dashboard inspection
+	assessment.RawResponse = content
 
 	return &assessment, nil
 }
