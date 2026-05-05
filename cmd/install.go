@@ -105,16 +105,20 @@ func runInstall(cmd *cobra.Command, args []string) error {
 	fmt.Println()
 
 	// 1. Copy binary to /usr/local/bin
-	selfPath, err := os.Executable()
-	if err != nil {
-		return fmt.Errorf("cannot find own binary: %w", err)
-	}
-	selfPath, _ = filepath.EvalSymlinks(selfPath)
-
+	// Find the best source binary: prefer GOPATH/bin (from go install),
+	// fall back to the currently-running executable.
 	dst := "/usr/local/bin/camscan"
-	if selfPath != dst {
-		fmt.Printf("  → Copying binary to %s\n", dst)
-		input, err := os.ReadFile(selfPath)
+	srcPath := findGoBinary()
+
+	selfPath, _ := os.Executable()
+	selfPath, _ = filepath.EvalSymlinks(selfPath)
+	if srcPath == "" {
+		srcPath = selfPath
+	}
+
+	if srcPath != dst {
+		fmt.Printf("  → Copying %s → %s\n", srcPath, dst)
+		input, err := os.ReadFile(srcPath)
 		if err != nil {
 			return fmt.Errorf("read binary: %w", err)
 		}
@@ -122,7 +126,8 @@ func runInstall(cmd *cobra.Command, args []string) error {
 			return fmt.Errorf("write binary: %w", err)
 		}
 	} else {
-		fmt.Printf("  → Binary already at %s\n", dst)
+		// Running from /usr/local/bin and no newer go/bin copy found
+		fmt.Printf("  → Binary at %s (up to date)\n", dst)
 	}
 
 	// 2. Create env config
@@ -189,3 +194,39 @@ func runInstall(cmd *cobra.Command, args []string) error {
 
 	return nil
 }
+
+// findGoBinary searches common locations where 'go install' places the camscan binary.
+func findGoBinary() string {
+	candidates := []string{}
+
+	// Check GOBIN first
+	if gobin := os.Getenv("GOBIN"); gobin != "" {
+		candidates = append(candidates, filepath.Join(gobin, "camscan"))
+	}
+
+	// Check GOPATH/bin
+	if gopath := os.Getenv("GOPATH"); gopath != "" {
+		candidates = append(candidates, filepath.Join(gopath, "bin", "camscan"))
+	}
+
+	// Check the user who invoked sudo
+	if sudoUser := os.Getenv("SUDO_USER"); sudoUser != "" {
+		if u, err := user.Lookup(sudoUser); err == nil {
+			candidates = append(candidates, filepath.Join(u.HomeDir, "go", "bin", "camscan"))
+		}
+	}
+
+	// Common defaults
+	candidates = append(candidates,
+		filepath.Join(os.Getenv("HOME"), "go", "bin", "camscan"),
+		"/root/go/bin/camscan",
+	)
+
+	for _, p := range candidates {
+		if info, err := os.Stat(p); err == nil && !info.IsDir() {
+			return p
+		}
+	}
+	return ""
+}
+
