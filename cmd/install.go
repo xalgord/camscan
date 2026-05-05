@@ -42,6 +42,8 @@ Description=CamScan — IP Camera Security Scanner
 Documentation=https://github.com/xalgord/camscan
 After=network-online.target
 Wants=network-online.target
+StartLimitIntervalSec=300
+StartLimitBurst=5
 
 [Service]
 Type=simple
@@ -51,8 +53,6 @@ EnvironmentFile=/etc/camscan/camscan.env
 ExecStart=/usr/local/bin/camscan $CAMSCAN_ARGS
 Restart=on-failure
 RestartSec=30
-StartLimitIntervalSec=300
-StartLimitBurst=5
 
 # Security hardening
 NoNewPrivileges=true
