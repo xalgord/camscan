@@ -33,6 +33,7 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
 .controls .query{margin-left:auto;font-family:'JetBrains Mono',monospace;font-size:12px;color:var(--text2);max-width:400px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .log-container{padding:12px 24px;display:flex;flex-direction:column;gap:6px;padding-bottom:80px}
 .log-entry{display:flex;gap:12px;padding:10px 14px;border-radius:8px;background:var(--surface);border:1px solid var(--border);animation:slideIn .3s ease;font-size:13px;line-height:1.5}
+.log-entry.clickable{cursor:pointer;transition:all .2s}.log-entry.clickable:hover{background:var(--surface2);border-color:var(--accent);transform:translateX(4px)}
 @keyframes slideIn{from{opacity:0;transform:translateY(-8px)}to{opacity:1;transform:translateY(0)}}
 .log-entry .time{font-family:'JetBrains Mono',monospace;color:var(--text2);font-size:11px;white-space:nowrap;min-width:70px;padding-top:1px}
 .log-entry .icon{font-size:16px;min-width:20px;text-align:center}
@@ -54,6 +55,29 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
 .empty-state .icon{font-size:48px;margin-bottom:16px;opacity:.5}
 .empty-state p{font-size:14px}
 .uptime{font-family:'JetBrains Mono',monospace;font-size:12px}
+/* Detail Panel */
+.overlay{position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:200;opacity:0;pointer-events:none;transition:opacity .3s}
+.overlay.open{opacity:1;pointer-events:auto}
+.detail-panel{position:fixed;top:0;right:-520px;width:500px;max-width:90vw;height:100vh;background:var(--bg);border-left:1px solid var(--border);z-index:300;transition:right .3s ease;overflow-y:auto;display:flex;flex-direction:column}
+.detail-panel.open{right:0}
+.dp-header{padding:16px 20px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center;position:sticky;top:0;background:var(--bg);z-index:1}
+.dp-header h2{font-size:16px;font-weight:700;display:flex;align-items:center;gap:8px}
+.dp-close{background:none;border:1px solid var(--border);color:var(--text2);width:32px;height:32px;border-radius:6px;cursor:pointer;font-size:16px;display:flex;align-items:center;justify-content:center;transition:all .2s}
+.dp-close:hover{border-color:var(--red);color:var(--red)}
+.dp-body{padding:16px 20px;flex:1;display:flex;flex-direction:column;gap:16px}
+.dp-section{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:14px 16px}
+.dp-section h3{font-size:13px;text-transform:uppercase;letter-spacing:.5px;color:var(--text2);margin-bottom:10px;display:flex;align-items:center;gap:6px}
+.dp-kv{display:grid;grid-template-columns:auto 1fr;gap:6px 12px;font-size:13px}
+.dp-kv dt{color:var(--text2);white-space:nowrap}
+.dp-kv dd{font-family:'JetBrains Mono',monospace;font-size:12px;word-break:break-all}
+.dp-tag{display:inline-block;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600;margin:2px}
+.dp-tag.cve{background:rgba(239,68,68,.12);color:var(--red);border:1px solid rgba(239,68,68,.25)}
+.dp-tag.exploit{background:rgba(249,115,22,.12);color:var(--orange);border:1px solid rgba(249,115,22,.25)}
+.dp-vuln{padding:10px 12px;border-radius:6px;background:var(--surface2);border:1px solid var(--border);margin-bottom:8px}
+.dp-vuln .v-title{font-weight:600;font-size:13px;margin-bottom:4px}
+.dp-vuln .v-desc{color:var(--text2);font-size:12px;line-height:1.5}
+.dp-score-bar{height:6px;border-radius:3px;background:var(--surface2);overflow:hidden;margin-top:6px}
+.dp-score-fill{height:100%;border-radius:3px;transition:width .5s ease}
 </style>
 </head>
 <body>
@@ -81,10 +105,16 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
 <div class="log-container" id="logs">
   <div class="empty-state"><div class="icon">📡</div><p>Waiting for scan events...<br>Start a scan to see real-time results here.</p></div>
 </div>
+<div class="overlay" id="overlay" onclick="closePanel()"></div>
+<div class="detail-panel" id="detailPanel">
+  <div class="dp-header"><h2 id="dpTitle">🔍 Analysis Detail</h2><button class="dp-close" onclick="closePanel()">✕</button></div>
+  <div class="dp-body" id="dpBody"></div>
+</div>
 <script>
 const logs=document.getElementById('logs'),MAX=500;
 let entries=[],filter='all',paused=false,autoScroll=true,started=false;
 let scanActive=false;
+const detailStore={};// ip:port -> analysis payload
 
 function setFilter(f){
   filter=f;
@@ -109,11 +139,12 @@ function fmtTime(ts){
 function fmtUptime(s){const h=Math.floor(s/3600),m=Math.floor((s%3600)/60),sec=Math.floor(s%60);
 return (h>0?h+'h ':'')+(m>0?m+'m ':'')+sec+'s'}
 
-function addEntry(html,cat){
+function addEntry(html,cat,clickKey){
   if(!started){logs.innerHTML='';started=true}
   if(paused)return;
   const div=document.createElement('div');div.innerHTML=html;const el=div.firstChild;
   el.style.display=(filter==='all'||filter===cat)?'':'none';
+  if(clickKey){el.classList.add('clickable');el.onclick=()=>openPanel(clickKey)}
   logs.appendChild(el);
   const entry={el,cat};entries.push(entry);
   while(entries.length>MAX){entries[0].el.remove();entries.shift()}
@@ -121,8 +152,8 @@ function addEntry(html,cat){
 }
 
 function badge(level){const l=(level||'info').toLowerCase();return `<span class="badge ${l}">${level}</span>`}
-
 function msg(d){return typeof d==='string'?d:(d&&d.message?d.message:JSON.stringify(d))}
+function esc(s){const d=document.createElement('div');d.textContent=s;return d.innerHTML}
 
 function detectRiskLevel(text){
   const t=(text||'').toLowerCase();
@@ -132,6 +163,92 @@ function detectRiskLevel(text){
   if(t.includes('low'))return 'Low';
   return null;
 }
+
+function scoreColor(s){if(s>=80)return'var(--red)';if(s>=60)return'var(--orange)';if(s>=40)return'var(--yellow)';return'var(--green)'}
+
+function openPanel(key){
+  const p=detailStore[key];if(!p)return;
+  const a=p.assessment,c=p.camera;
+  document.getElementById('dpTitle').innerHTML=`🔍 ${esc(c.ip)}:${c.port}`;
+  let h='';
+  // Risk score
+  h+=`<div class="dp-section"><h3>⚡ Risk Assessment</h3>`;
+  h+=`<div style="display:flex;align-items:center;gap:12px;margin-bottom:8px"><span style="font-size:32px;font-weight:700;color:${scoreColor(a.risk_score)}">${a.risk_score}</span><span style="font-size:14px;color:var(--text2)">/100</span>${badge(a.risk_level)}</div>`;
+  h+=`<div class="dp-score-bar"><div class="dp-score-fill" style="width:${a.risk_score}%;background:${scoreColor(a.risk_score)}"></div></div>`;
+  h+=`<p style="margin-top:10px;font-size:13px;color:var(--text2)">${esc(a.summary||'')}</p></div>`;
+  // Camera info
+  h+=`<div class="dp-section"><h3>📷 Camera Info</h3><dl class="dp-kv">`;
+  h+=`<dt>IP:Port</dt><dd>${esc(c.ip)}:${c.port}</dd>`;
+  if(c.product)h+=`<dt>Product</dt><dd>${esc(c.product)}</dd>`;
+  if(c.org)h+=`<dt>Org</dt><dd>${esc(c.org)}</dd>`;
+  if(c.city||c.country)h+=`<dt>Location</dt><dd>${esc((c.city||'')+', '+(c.country||''))}</dd>`;
+  h+=`<dt>Open</dt><dd>${a.is_open?'✅ Yes':'❌ No'}</dd>`;
+  h+=`<dt>Default Creds</dt><dd>${a.default_creds?'⚠️ Yes':'🔒 No'}</dd>`;
+  h+=`</dl></div>`;
+  // Attack surface
+  if(a.attack_surface){
+    const as=a.attack_surface;
+    h+=`<div class="dp-section"><h3>🎯 Attack Surface</h3><dl class="dp-kv">`;
+    if(as.banner)h+=`<dt>Banner</dt><dd>${esc(as.banner)}</dd>`;
+    if(as.server_header)h+=`<dt>Server</dt><dd>${esc(as.server_header)}</dd>`;
+    if(as.ssl_info)h+=`<dt>SSL</dt><dd>${esc(as.ssl_info)}</dd>`;
+    if(as.open_ports&&as.open_ports.length)h+=`<dt>Ports</dt><dd>${as.open_ports.join(', ')}</dd>`;
+    if(as.web_endpoints&&as.web_endpoints.length)h+=`<dt>Endpoints</dt><dd>${as.web_endpoints.map(esc).join(', ')}</dd>`;
+    h+=`</dl></div>`;
+  }
+  // Auth analysis
+  if(a.auth_analysis){
+    const aa=a.auth_analysis;
+    h+=`<div class="dp-section"><h3>🔑 Authentication</h3><dl class="dp-kv">`;
+    if(aa.mechanism)h+=`<dt>Mechanism</dt><dd>${esc(aa.mechanism)}</dd>`;
+    if(aa.default_creds_tested&&aa.default_creds_tested.length)h+=`<dt>Tested</dt><dd>${aa.default_creds_tested.map(esc).join(', ')}</dd>`;
+    h+=`<dt>Bypass Possible</dt><dd>${aa.bypass_possible?'⚠️ Yes':'No'}</dd>`;
+    if(aa.bypass_method)h+=`<dt>Method</dt><dd>${esc(aa.bypass_method)}</dd>`;
+    h+=`</dl></div>`;
+  }
+  // Vulnerabilities
+  if(a.vulns&&a.vulns.length){
+    h+=`<div class="dp-section"><h3>🛡️ Vulnerabilities (${a.vulns.length})</h3>`;
+    a.vulns.forEach(v=>{
+      h+=`<div class="dp-vuln"><div class="v-title">${esc(v.title||'Unknown')} ${v.severity?badge(v.severity):''}</div>`;
+      if(v.cve_id)h+=`<span class="dp-tag cve">${esc(v.cve_id)}</span> `;
+      if(v.description)h+=`<div class="v-desc">${esc(v.description)}</div>`;
+      if(v.remediation)h+=`<div class="v-desc" style="margin-top:4px;color:var(--green)">💡 ${esc(v.remediation)}</div>`;
+      h+=`</div>`;
+    });
+    h+=`</div>`;
+  }
+  // Exploit paths
+  if(a.exploit_paths&&a.exploit_paths.length){
+    h+=`<div class="dp-section"><h3>⚔️ Exploit Paths</h3>`;
+    a.exploit_paths.forEach(p=>{h+=`<div class="dp-tag exploit" style="display:block;margin-bottom:6px">${esc(p)}</div>`});
+    h+=`</div>`;
+  }
+  // CVEs
+  if(a.cve_references&&a.cve_references.length){
+    h+=`<div class="dp-section"><h3>📋 CVE References</h3><div>`;
+    a.cve_references.forEach(c=>{h+=`<a href="https://nvd.nist.gov/vuln/detail/${esc(c)}" target="_blank" class="dp-tag cve" style="text-decoration:none">${esc(c)}</a> `});
+    h+=`</div></div>`;
+  }
+  // Access instructions — shown prominently
+  if(a.access_instructions&&a.access_instructions.length){
+    h+=`<div class="dp-section" style="border-color:var(--cyan)"><h3>🧭 How to Access / Verify</h3>`;
+    a.access_instructions.forEach((inst,i)=>{
+      h+=`<div style="padding:8px 12px;border-radius:6px;background:var(--surface2);border:1px solid var(--border);margin-bottom:6px;font-size:13px;line-height:1.6">`;
+      h+=`<span style="color:var(--cyan);font-weight:600">${i+1}.</span> ${esc(inst)}</div>`;
+    });
+    h+=`</div>`;
+  }
+  document.getElementById('dpBody').innerHTML=h;
+  document.getElementById('detailPanel').classList.add('open');
+  document.getElementById('overlay').classList.add('open');
+}
+
+function closePanel(){
+  document.getElementById('detailPanel').classList.remove('open');
+  document.getElementById('overlay').classList.remove('open');
+}
+document.addEventListener('keydown',e=>{if(e.key==='Escape')closePanel()});
 
 const es=new EventSource('/events');
 es.onmessage=function(e){
@@ -167,7 +284,16 @@ es.onmessage=function(e){
     const risk=detectRiskLevel(m);
     const icons={'Critical':'🔴','High':'🟠','Medium':'🟡','Low':'🟢'};
     const icon=risk?icons[risk]||'⚪':'🤖';
-    addEntry(`<div class="log-entry camera"><span class="time">${t}</span><span class="icon">${icon}</span><div class="content"><div class="title">AI Analysis</div><div class="detail">${m}</div></div>${risk?badge(risk):''}</div>`,'camera');
+    // Extract ip:port for clickable linking
+    const ipMatch=m.match(/(\d+\.\d+\.\d+\.\d+):(\d+)/);
+    const clickKey=ipMatch?ipMatch[0]:null;
+    addEntry(`<div class="log-entry camera"><span class="time">${t}</span><span class="icon">${icon}</span><div class="content"><div class="title">AI Analysis${clickKey?' — click for details':''}</div><div class="detail">${m}</div></div>${risk?badge(risk):''}</div>`,'camera',clickKey);
+    break;
+  case 'analysis_detail':
+    if(typeof d==='object'&&d.camera&&d.assessment){
+      const key=d.camera.ip+':'+d.camera.port;
+      detailStore[key]=d;
+    }
     break;
   case 'alert_sent':
     addEntry(`<div class="log-entry alert"><span class="time">${t}</span><span class="icon">🚨</span><div class="content"><div class="title">Discord Alert</div><div class="detail">${m}</div></div>${badge('Critical')}</div>`,'alert');

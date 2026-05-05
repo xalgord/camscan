@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log"
 	"net/http"
 	"net/url"
 	"strings"
@@ -91,7 +90,6 @@ func (q *SearchQuery) BuildQuery() string {
 // Search performs a host search on Shodan and returns discovered cameras.
 func (c *Client) Search(ctx context.Context, query *SearchQuery, limit int) (*SearchResult, error) {
 	q := query.BuildQuery()
-	log.Printf("Shodan query: %s", q)
 
 	// Build request URL (B6: handle parse error)
 	u, err := url.Parse(baseURL + "/shodan/host/search")

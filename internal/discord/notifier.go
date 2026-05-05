@@ -57,16 +57,20 @@ func NewNotifier(webhookURL string) *Notifier {
 
 // CameraAlert holds the data needed to send a camera alert.
 type CameraAlert struct {
-	IP              string
-	Port            int
-	Product         string
-	Location        string
-	Org             string
-	RiskLevel       string
-	IsOpen          bool
-	DefaultCreds    bool
-	Summary         string
-	Vulnerabilities []string
+	IP                 string
+	Port               int
+	Product            string
+	Location           string
+	Org                string
+	RiskLevel          string
+	RiskScore          int
+	IsOpen             bool
+	DefaultCreds       bool
+	Summary            string
+	Vulnerabilities    []string // Flat titles from SecurityAssessment.VulnTitles()
+	ExploitPaths       []string
+	CveReferences      []string
+	AccessInstructions []string
 }
 
 // SendAlert sends a rich embed notification for an open/critical camera.
@@ -114,13 +118,48 @@ func (n *Notifier) SendAlert(alert CameraAlert) error {
 			{Name: "📷 Product", Value: product, Inline: true},
 			{Name: "📍 Location", Value: alert.Location, Inline: true},
 			{Name: "🏢 Organization", Value: alert.Org, Inline: true},
-			{Name: "⚡ Risk Level", Value: risk.Icon(alert.RiskLevel) + " " + alert.RiskLevel, Inline: true},
+			{Name: "⚡ Risk Level", Value: fmt.Sprintf("%s %s (%d/100)", risk.Icon(alert.RiskLevel), alert.RiskLevel, alert.RiskScore), Inline: true},
 			{Name: "🔓 Open Access", Value: openStatus, Inline: true},
 			{Name: "🔑 Default Creds", Value: credsStatus, Inline: false},
 			{Name: "🛡️ Vulnerabilities", Value: vulns, Inline: false},
 		},
 		Footer:    &Footer{Text: "CamScan • Shodan + Minimax M2.7"},
 		Timestamp: time.Now().UTC().Format(time.RFC3339),
+	}
+
+	// Add exploit paths if present
+	if len(alert.ExploitPaths) > 0 {
+		max := len(alert.ExploitPaths)
+		if max > 3 {
+			max = 3
+		}
+		var paths []string
+		for _, p := range alert.ExploitPaths[:max] {
+			paths = append(paths, "⚔️ "+p)
+		}
+		embed.Fields = append(embed.Fields, Field{Name: "🎯 Exploit Paths", Value: strings.Join(paths, "\n"), Inline: false})
+	}
+
+	// Add CVE references if present
+	if len(alert.CveReferences) > 0 {
+		var cves []string
+		for _, c := range alert.CveReferences {
+			cves = append(cves, fmt.Sprintf("[%s](https://nvd.nist.gov/vuln/detail/%s)", c, c))
+		}
+		embed.Fields = append(embed.Fields, Field{Name: "📋 CVE References", Value: strings.Join(cves, " • "), Inline: false})
+	}
+
+	// Add access instructions if present
+	if len(alert.AccessInstructions) > 0 {
+		max := len(alert.AccessInstructions)
+		if max > 4 {
+			max = 4
+		}
+		var steps []string
+		for i, inst := range alert.AccessInstructions[:max] {
+			steps = append(steps, fmt.Sprintf("%d. %s", i+1, inst))
+		}
+		embed.Fields = append(embed.Fields, Field{Name: "🧭 How to Access", Value: strings.Join(steps, "\n"), Inline: false})
 	}
 
 	payload := webhookPayload{

@@ -69,7 +69,7 @@ func renderJSON(results []analyzer.Result) {
 			jr.RiskLevel = r.Assessment.RiskLevel
 			jr.IsOpen = r.Assessment.IsOpen
 			jr.DefaultCreds = r.Assessment.DefaultCreds
-			jr.Vulns = r.Assessment.Vulnerabilities
+			jr.Vulns = r.Assessment.VulnTitles()
 			jr.Recommendations = r.Assessment.Recommendations
 			jr.Summary = r.Assessment.Summary
 		}
@@ -187,14 +187,35 @@ func renderTable(results []analyzer.Result, total int, verbose bool) {
 
 			if r.Assessment != nil {
 				fmt.Printf("    Risk:      %s %s\n", risk.Icon(r.Assessment.RiskLevel), r.Assessment.RiskLevel)
+				fmt.Printf("    Score:     %d/100\n", r.Assessment.RiskScore)
 				fmt.Printf("    Open:      %v\n", r.Assessment.IsOpen)
 				fmt.Printf("    DefCreds:  %v\n", r.Assessment.DefaultCreds)
+
 				if len(r.Assessment.Vulnerabilities) > 0 {
-					fmt.Printf("    Vulns:\n")
+					fmt.Printf("    Vulns:     (%d found)\n", len(r.Assessment.Vulnerabilities))
 					for _, v := range r.Assessment.Vulnerabilities {
 						fmt.Printf("      • %s\n", v)
 					}
 				}
+
+				if len(r.Assessment.ExploitPaths) > 0 {
+					fmt.Printf("    Exploits:\n")
+					for _, ep := range r.Assessment.ExploitPaths {
+						fmt.Printf("      ⚔ %s\n", ep)
+					}
+				}
+
+				if len(r.Assessment.CveReferences) > 0 {
+					fmt.Printf("    CVEs:      %s\n", strings.Join(r.Assessment.CveReferences, ", "))
+				}
+
+				if len(r.Assessment.AccessInstructions) > 0 {
+					fmt.Printf("    Access:\n")
+					for j, inst := range r.Assessment.AccessInstructions {
+						fmt.Printf("      %d. %s\n", j+1, inst)
+					}
+				}
+
 				if len(r.Assessment.Recommendations) > 0 {
 					fmt.Printf("    Fixes:\n")
 					for _, rec := range r.Assessment.Recommendations {

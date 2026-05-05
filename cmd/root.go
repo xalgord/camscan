@@ -148,13 +148,32 @@ func runScan(cmd *cobra.Command, args []string) error {
 	}
 	if wurl != "" {
 		notifier = discord.NewNotifier(wurl)
-		log.Println("Discord alerts enabled")
 	}
 
 	// Start the real-time dashboard
 	hub := dashboard.NewHub()
 	dashServer := dashboard.NewServer(hub, 9847)
 	dashServer.Start()
+
+	// Log component status
+	if !daemon {
+		dim := color.New(color.FgHiBlack)
+		dim.Println("┌─────────────────────────────────────────────────┐")
+		dim.Printf("│  %-47s│\n", fmt.Sprintf("Country: %s  Limit: %d  Type: %s", strings.ToUpper(country), limit, func() string { if cameraType == "" { return "default" }; return cameraType }()))
+		dim.Printf("│  %-47s│\n", fmt.Sprintf("Shodan:    ✓ connected"))
+		if noAI {
+			dim.Printf("│  %-47s│\n", "Minimax:   ✗ disabled (--no-ai)")
+		} else {
+			dim.Printf("│  %-47s│\n", "Minimax:   ✓ M2.7 engine")
+		}
+		if notifier != nil {
+			dim.Printf("│  %-47s│\n", "Discord:   ✓ alerts enabled")
+		} else {
+			dim.Printf("│  %-47s│\n", "Discord:   ✗ no webhook configured")
+		}
+		dim.Printf("│  %-47s│\n", "Dashboard: ✓ http://localhost:9847")
+		dim.Println("└─────────────────────────────────────────────────┘")
+	}
 
 	// Run analysis
 	a := analyzer.New(shodanClient, minimaxClient, notifier, hub, noAI)
@@ -238,7 +257,11 @@ func runDaemon(ctx context.Context, a *analyzer.Analyzer, query *shodan.SearchQu
 		return fmt.Errorf("invalid interval %q: %w", interval, err)
 	}
 
-	log.Printf("Daemon mode — scanning every %s", duration)
+	log.Println("┌─────────────────────────────────────────────────┐")
+	log.Printf("│  DAEMON MODE — scanning every %-18s│", duration)
+	log.Printf("│  Query:  %-39s│", query.BuildQuery())
+	log.Printf("│  Limit:  %-39d│", limit)
+	log.Println("└─────────────────────────────────────────────────┘")
 
 	// W1: Cache with 24h TTL — won't re-alert the same IP within a day
 	cache := newSeenCache(24 * time.Hour)
@@ -248,27 +271,35 @@ func runDaemon(ctx context.Context, a *analyzer.Analyzer, query *shodan.SearchQu
 
 	scanNum := 1
 	for {
-		log.Printf("--- Scan #%d starting at %s ---", scanNum, time.Now().Format("2006-01-02 15:04:05"))
+		log.Println()
+		log.Printf("━━━ SCAN #%d ━━━ %s ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", scanNum, time.Now().Format("2006-01-02 15:04:05"))
 
+		scanStart := time.Now()
 		results, total, scanErr := a.Run(ctx, query, limit)
 		if scanErr != nil {
-			log.Printf("Scan #%d failed: %v", scanNum, scanErr)
+			log.Printf("  ✗ Scan #%d failed after %s: %v", scanNum, time.Since(scanStart).Round(time.Second), scanErr)
 		} else {
 			// W1: Filter out previously seen results before output
 			var newResults []analyzer.Result
+			skipped := 0
 			for _, r := range results {
 				key := fmt.Sprintf("%s:%d", r.Camera.IP, r.Camera.Port)
 				if cache.MarkSeen(key) {
-					log.Printf("  Skipping already-seen: %s", key)
+					skipped++
 					continue
 				}
 				newResults = append(newResults, r)
 			}
 
+			if skipped > 0 {
+				log.Printf("  ├─ Skipped %d already-seen cameras (24h dedup)", skipped)
+			}
+
 			if len(newResults) > 0 {
+				log.Printf("  ├─ New cameras: %d / Total in Shodan: %d", len(newResults), total)
 				output.Render(newResults, total, format, verbose)
 			} else {
-				log.Printf("  No new cameras found this cycle")
+				log.Printf("  └─ No new cameras found this cycle")
 			}
 		}
 
@@ -276,11 +307,16 @@ func runDaemon(ctx context.Context, a *analyzer.Analyzer, query *shodan.SearchQu
 		cache.Prune()
 		scanNum++
 
-		log.Printf("Next scan at %s", time.Now().Add(duration).Format("15:04:05"))
+		nextAt := time.Now().Add(duration).Format("15:04:05")
+		log.Printf("  ⏰ Next scan at %s (in %s)", nextAt, duration)
 
 		select {
 		case <-ctx.Done():
-			log.Println("Shutting down gracefully...")
+			log.Println()
+			log.Println("┌─────────────────────────────────────────────────┐")
+			log.Println("│  SHUTTING DOWN GRACEFULLY                       │")
+			log.Printf("│  Completed %d scan cycles                        │", scanNum-1)
+			log.Println("└─────────────────────────────────────────────────┘")
 			return nil
 		case <-ticker.C:
 			// next iteration

@@ -53,45 +53,80 @@ func (a *Analyzer) Run(ctx context.Context, query *shodan.SearchQuery, limit int
 	cyan := color.New(color.FgCyan, color.Bold)
 	yellow := color.New(color.FgYellow)
 	green := color.New(color.FgGreen)
+	dim := color.New(color.FgHiBlack)
+
+	cyan.Println("\n═══════════════════════════════════════════════════════════════")
+	cyan.Println("  PHASE 1: PRE-FLIGHT CHECKS")
+	cyan.Println("═══════════════════════════════════════════════════════════════")
 
 	// W2: Pre-flight check — verify Shodan has enough query credits
 	apiInfo, err := a.shodanClient.GetAPIInfo(ctx)
 	if err != nil {
-		log.Printf("⚠ Could not verify Shodan credits: %v", err)
+		log.Printf("  ⚠ Could not verify Shodan credits: %v", err)
 	} else if apiInfo.QueryCredits <= 0 {
 		return nil, 0, fmt.Errorf("shodan has 0 query credits remaining (plan: %s)", apiInfo.Plan)
 	} else {
-		log.Printf("ℹ Shodan credits remaining: %d (plan: %s)", apiInfo.QueryCredits, apiInfo.Plan)
+		fmt.Printf("  ├─ Shodan Plan:    %s\n", apiInfo.Plan)
+		fmt.Printf("  ├─ Query Credits:  %d remaining\n", apiInfo.QueryCredits)
+		fmt.Printf("  └─ Scan Credits:   %d remaining\n", apiInfo.ScanCredits)
 	}
 
 	queryStr := query.BuildQuery()
-	cyan.Printf("\n🔍 Searching Shodan: %s\n", queryStr)
+
+	cyan.Println("\n═══════════════════════════════════════════════════════════════")
+	cyan.Println("  PHASE 2: SHODAN RECONNAISSANCE")
+	cyan.Println("═══════════════════════════════════════════════════════════════")
+	fmt.Printf("  ├─ Query:    %s\n", queryStr)
+	fmt.Printf("  ├─ Limit:    %d results\n", limit)
+	dim.Printf("  └─ Sending request to api.shodan.io...\n")
 
 	// Dashboard: emit scan start
 	a.emitEvent(dashboard.EventScanStart, fmt.Sprintf("Scan started — query: %s, limit: %d", queryStr, limit))
 
 	// Step 1: Discover cameras via Shodan
+	shodanStart := time.Now()
 	searchResult, err := a.shodanClient.Search(ctx, query, limit)
 	if err != nil {
 		a.emitEvent(dashboard.EventLog, fmt.Sprintf("Shodan search failed: %v", err))
 		return nil, 0, fmt.Errorf("shodan search failed: %w", err)
 	}
+	shodanDur := time.Since(shodanStart).Round(time.Millisecond)
 
 	total := searchResult.Total
 	cameras := searchResult.Matches
 
 	if len(cameras) == 0 {
-		yellow.Println("⚠  No cameras found matching your query.")
+		yellow.Println("  ⚠  No cameras found matching your query.")
 		a.emitEvent(dashboard.EventScanComplete, "No cameras found matching query.")
 		return nil, total, nil
 	}
 
-	green.Printf("✓  Found %d cameras (total in Shodan: %d)\n", len(cameras), total)
+	green.Printf("  ✓ Found %d cameras (total in Shodan: %d) in %s\n", len(cameras), total, shodanDur)
 	a.emitEvent(dashboard.EventCameraFound, fmt.Sprintf("Discovered %d cameras (total in Shodan: %d)", len(cameras), total))
+
+	// Print discovered cameras summary
+	fmt.Println()
+	for i, cam := range cameras {
+		product := cam.Product
+		if product == "" {
+			product = "Unknown"
+		}
+		loc := cam.Location.City
+		if loc != "" && cam.Location.Country != "" {
+			loc += ", " + cam.Location.Country
+		} else if cam.Location.Country != "" {
+			loc = cam.Location.Country
+		}
+		prefix := "├"
+		if i == len(cameras)-1 {
+			prefix = "└"
+		}
+		dim.Printf("  %s─ [%d] %s:%d  %s  (%s)\n", prefix, i+1, cam.IP, cam.Port, product, loc)
+	}
 
 	// Step 2: If AI analysis is disabled, return raw results
 	if a.noAI {
-		yellow.Println("ℹ  AI analysis skipped (--no-ai flag)")
+		yellow.Println("\n  ℹ  AI analysis skipped (--no-ai flag)")
 		results := make([]Result, len(cameras))
 		for i, cam := range cameras {
 			results[i] = Result{Camera: cam}
@@ -100,7 +135,10 @@ func (a *Analyzer) Run(ctx context.Context, query *shodan.SearchQuery, limit int
 	}
 
 	// Step 3: Analyze each camera with Minimax M2.7
-	cyan.Printf("🤖 Analyzing %d cameras with Minimax M2.7...\n\n", len(cameras))
+	cyan.Println("\n═══════════════════════════════════════════════════════════════")
+	cyan.Printf("  PHASE 3: AI SECURITY ANALYSIS (%d cameras)\n", len(cameras))
+	cyan.Println("═══════════════════════════════════════════════════════════════")
+	dim.Printf("  Engine: Minimax M2.7 | Concurrency: 3 | Methodology: 6-phase pentest\n\n")
 
 	results := make([]Result, len(cameras))
 	var wg sync.WaitGroup
@@ -120,15 +158,23 @@ func (a *Analyzer) Run(ctx context.Context, query *shodan.SearchQuery, limit int
 			}
 			defer func() { <-sem }() // Release
 
+			aiStart := time.Now()
 			prompt := buildCameraPrompt(camera)
 			assessment, analyzeErr := a.minimaxClient.AnalyzeCamera(ctx, prompt)
+			aiDur := time.Since(aiStart).Round(time.Millisecond)
+
+			product := camera.Product
+			if product == "" {
+				product = "Unknown"
+			}
 
 			if analyzeErr != nil {
 				results[idx] = Result{
 					Camera: camera,
 					Error:  analyzeErr.Error(),
 				}
-				fmt.Printf("  [%d/%d] %s:%d — ❌ AI analysis failed\n", idx+1, len(cameras), camera.IP, camera.Port)
+				fmt.Printf("  [%d/%d] %s:%d (%s)\n", idx+1, len(cameras), camera.IP, camera.Port, product)
+				color.Red("         ❌ AI analysis failed (%s): %s\n", aiDur, analyzeErr.Error())
 				a.emitEvent(dashboard.EventAnalysis, fmt.Sprintf("[%d/%d] %s:%d — ❌ AI analysis failed: %s", idx+1, len(cameras), camera.IP, camera.Port, analyzeErr.Error()))
 			} else {
 				results[idx] = Result{
@@ -136,8 +182,37 @@ func (a *Analyzer) Run(ctx context.Context, query *shodan.SearchQuery, limit int
 					Assessment: assessment,
 				}
 				icon := risk.Icon(assessment.RiskLevel)
-				fmt.Printf("  [%d/%d] %s:%d — %s %s\n", idx+1, len(cameras), camera.IP, camera.Port, icon, assessment.RiskLevel)
-				a.emitEvent(dashboard.EventAnalysis, fmt.Sprintf("[%d/%d] %s:%d — %s %s", idx+1, len(cameras), camera.IP, camera.Port, icon, assessment.RiskLevel))
+				vulnCount := len(assessment.Vulnerabilities)
+				cveCount := len(assessment.CveReferences)
+
+				// Main status line
+				fmt.Printf("  [%d/%d] %s:%d (%s)\n", idx+1, len(cameras), camera.IP, camera.Port, product)
+				fmt.Printf("         %s %s  Score: %d/100  Open: %v  DefCreds: %v\n",
+					icon, assessment.RiskLevel, assessment.RiskScore, assessment.IsOpen, assessment.DefaultCreds)
+
+				// Vulnerability summary
+				if vulnCount > 0 || cveCount > 0 {
+					fmt.Printf("         Vulns: %d found", vulnCount)
+					if cveCount > 0 {
+						fmt.Printf("  CVEs: %s", strings.Join(assessment.CveReferences, ", "))
+					}
+					fmt.Println()
+				}
+
+				// Exploit paths
+				if len(assessment.ExploitPaths) > 0 {
+					for _, ep := range assessment.ExploitPaths {
+						dim.Printf("         ⚔ %s\n", ep)
+					}
+				}
+
+				dim.Printf("         ⏱ %s\n\n", aiDur)
+
+				a.emitEvent(dashboard.EventAnalysis, fmt.Sprintf("[%d/%d] %s:%d — %s %s (%d/100) vulns=%d cves=%d",
+					idx+1, len(cameras), camera.IP, camera.Port, icon, assessment.RiskLevel, assessment.RiskScore, vulnCount, cveCount))
+
+				// Emit full structured analysis for the interactive dashboard
+				a.emitDetailEvent(idx+1, len(cameras), camera, assessment)
 			}
 		}(i, cam)
 	}
@@ -148,13 +223,63 @@ func (a *Analyzer) Run(ctx context.Context, query *shodan.SearchQuery, limit int
 	// B1: Send Discord alerts sequentially AFTER all analysis is done.
 	// This avoids concurrent goroutines hammering the Discord API.
 	if a.notifier != nil {
+		cyan.Println("═══════════════════════════════════════════════════════════════")
+		cyan.Println("  PHASE 4: DISCORD NOTIFICATIONS")
+		cyan.Println("═══════════════════════════════════════════════════════════════")
 		alerted := a.sendAlerts(results)
 		a.sendScanSummary(results, query.BuildQuery(), total, alerted, scanStart)
+		green.Printf("  ✓ Dispatched %d alerts + scan summary\n", alerted)
 		a.emitEvent(dashboard.EventAlertSent, fmt.Sprintf("Dispatched %d Discord alerts", alerted))
 	}
 
 	scanDuration := time.Since(scanStart).Round(time.Second)
-	a.emitEvent(dashboard.EventScanComplete, fmt.Sprintf("Scan finished — %d cameras analyzed in %s", len(results), scanDuration))
+
+	cyan.Println("\n═══════════════════════════════════════════════════════════════")
+	cyan.Println("  SCAN COMPLETE")
+	cyan.Println("═══════════════════════════════════════════════════════════════")
+
+	// Count by risk level for summary
+	var critN, highN, medN, lowN, errN int
+	for _, r := range results {
+		if r.Error != "" {
+			errN++
+			continue
+		}
+		if r.Assessment != nil {
+			switch strings.ToLower(r.Assessment.RiskLevel) {
+			case "critical":
+				critN++
+			case "high":
+				highN++
+			case "medium":
+				medN++
+			case "low":
+				lowN++
+			}
+		}
+	}
+
+	fmt.Printf("  ├─ Duration:    %s\n", scanDuration)
+	fmt.Printf("  ├─ Analyzed:    %d cameras\n", len(results))
+	if critN > 0 {
+		color.Red("  ├─ Critical:    %d\n", critN)
+	}
+	if highN > 0 {
+		color.Yellow("  ├─ High:        %d\n", highN)
+	}
+	if medN > 0 {
+		color.HiYellow("  ├─ Medium:      %d\n", medN)
+	}
+	if lowN > 0 {
+		color.Green("  ├─ Low:         %d\n", lowN)
+	}
+	if errN > 0 {
+		color.Red("  ├─ Errors:      %d\n", errN)
+	}
+	fmt.Printf("  └─ Dashboard:   http://localhost:9847\n")
+
+	a.emitEvent(dashboard.EventScanComplete, fmt.Sprintf("Scan finished — %d cameras analyzed in %s (crit=%d high=%d med=%d low=%d err=%d)",
+		len(results), scanDuration, critN, highN, medN, lowN, errN))
 
 	return results, total, nil
 }
@@ -188,22 +313,26 @@ func (a *Analyzer) sendAlerts(results []Result) int {
 		}
 
 		alert := discord.CameraAlert{
-			IP:              r.Camera.IP,
-			Port:            r.Camera.Port,
-			Product:         r.Camera.Product,
-			Location:        location,
-			Org:             r.Camera.Org,
-			RiskLevel:       r.Assessment.RiskLevel,
-			IsOpen:          r.Assessment.IsOpen,
-			DefaultCreds:    r.Assessment.DefaultCreds,
-			Summary:         r.Assessment.Summary,
-			Vulnerabilities: r.Assessment.Vulnerabilities,
+			IP:                 r.Camera.IP,
+			Port:               r.Camera.Port,
+			Product:            r.Camera.Product,
+			Location:           location,
+			Org:                r.Camera.Org,
+			RiskLevel:          r.Assessment.RiskLevel,
+			RiskScore:          r.Assessment.RiskScore,
+			IsOpen:             r.Assessment.IsOpen,
+			DefaultCreds:       r.Assessment.DefaultCreds,
+			Summary:            r.Assessment.Summary,
+			Vulnerabilities:    r.Assessment.VulnTitles(),
+			ExploitPaths:       r.Assessment.ExploitPaths,
+			CveReferences:      r.Assessment.CveReferences,
+			AccessInstructions: r.Assessment.AccessInstructions,
 		}
 
 		if err := a.notifier.SendAlert(alert); err != nil {
-			log.Printf("  ⚠ Discord alert failed for %s:%d: %v", r.Camera.IP, r.Camera.Port, err)
+			log.Printf("  ├─ ⚠ Alert FAILED for %s:%d: %v", r.Camera.IP, r.Camera.Port, err)
 		} else {
-			fmt.Printf("  📨 Discord alert sent for %s:%d\n", r.Camera.IP, r.Camera.Port)
+			fmt.Printf("  ├─ 📨 %s:%d → %s %s (Score: %d)\n", r.Camera.IP, r.Camera.Port, risk.Icon(r.Assessment.RiskLevel), r.Assessment.RiskLevel, r.Assessment.RiskScore)
 			alerted++
 		}
 	}
@@ -251,9 +380,9 @@ func (a *Analyzer) sendScanSummary(results []Result, query string, totalShodan, 
 	}
 
 	if err := a.notifier.SendScanSummary(summary); err != nil {
-		log.Printf("  ⚠ Discord scan summary failed: %v", err)
+		log.Printf("  └─ ⚠ Scan summary FAILED: %v", err)
 	} else {
-		log.Println("  📋 Discord scan summary sent")
+		fmt.Println("  └─ 📋 Scan summary sent")
 	}
 }
 
@@ -313,5 +442,29 @@ func (a *Analyzer) emitEvent(eventType dashboard.EventType, message string) {
 	a.hub.Broadcast(dashboard.Event{
 		Type: eventType,
 		Data: message,
+	})
+}
+
+// AnalysisPayload is the structured payload for analysis_detail events.
+type AnalysisPayload struct {
+	Index      int                        `json:"index"`
+	Total      int                        `json:"total"`
+	Camera     shodan.Camera              `json:"camera"`
+	Assessment *minimax.SecurityAssessment `json:"assessment"`
+}
+
+// emitDetailEvent sends a full structured analysis payload for dashboard drill-down.
+func (a *Analyzer) emitDetailEvent(index, total int, camera shodan.Camera, assessment *minimax.SecurityAssessment) {
+	if a.hub == nil {
+		return
+	}
+	a.hub.Broadcast(dashboard.Event{
+		Type: dashboard.EventAnalysisDetail,
+		Data: AnalysisPayload{
+			Index:      index,
+			Total:      total,
+			Camera:     camera,
+			Assessment: assessment,
+		},
 	})
 }

@@ -10,13 +10,14 @@ import (
 type EventType string
 
 const (
-	EventScanStart    EventType = "scan_start"
-	EventCameraFound  EventType = "camera_found"
-	EventAnalysis     EventType = "analysis"
-	EventAlertSent    EventType = "alert_sent"
-	EventScanComplete EventType = "scan_complete"
-	EventLog          EventType = "log"
-	EventStats        EventType = "stats"
+	EventScanStart      EventType = "scan_start"
+	EventCameraFound    EventType = "camera_found"
+	EventAnalysis       EventType = "analysis"
+	EventAnalysisDetail EventType = "analysis_detail" // Full structured analysis payload
+	EventAlertSent      EventType = "alert_sent"
+	EventScanComplete   EventType = "scan_complete"
+	EventLog            EventType = "log"
+	EventStats          EventType = "stats"
 )
 
 // Event is a structured dashboard event sent via SSE.
