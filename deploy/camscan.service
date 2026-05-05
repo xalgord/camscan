@@ -1,0 +1,41 @@
+[Unit]
+Description=CamScan — IP Camera Security Scanner
+Documentation=https://github.com/xalgord/camscan
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# User — change to your service user (matches CAMSCAN_USER in install script)
+User=camscan
+Group=camscan
+
+# Load API keys from environment file
+EnvironmentFile=/etc/camscan/camscan.env
+
+# Main command — CAMSCAN_ARGS is set in /etc/camscan/camscan.env
+ExecStart=/usr/local/bin/camscan $CAMSCAN_ARGS
+
+# Restart on failure with backoff
+Restart=on-failure
+RestartSec=30
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+# Security hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=read-only
+PrivateTmp=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+ReadWritePaths=/var/log/camscan
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=camscan
+
+[Install]
+WantedBy=multi-user.target
