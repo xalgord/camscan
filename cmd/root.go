@@ -45,6 +45,7 @@ var (
 	state      string
 	city       string
 	cameraType string
+	rawQuery   string
 	limit      int
 	outputFmt  string
 	verbose    bool
@@ -61,11 +62,14 @@ var rootCmd = &cobra.Command{
 to assess their security posture.
 
 Supports filtering by country, state, city, and camera type.
+Use --query for raw Shodan dorks or natural-language queries (AI-powered).
 All analysis is passive — no connections are made to discovered devices.`,
 	Example: `  camscan --country IN --limit 10
   camscan --country US --city "New York" --type hikvision
   camscan -c RU --city Moscow -v --limit 5
   camscan --country JP --no-ai --output json
+  camscan --query 'product:"Hikvision" country:IN'
+  camscan --query "find hikvision cameras in mumbai" --limit 10
   camscan --country IN --daemon --webhook https://discord.com/api/webhooks/...
   camscan --country IN --daemon --interval 30m --webhook https://discord.com/api/webhooks/...`,
 	RunE:    runScan,
@@ -77,6 +81,7 @@ func init() {
 	rootCmd.Flags().StringVarP(&state, "state", "s", "", "State or region name")
 	rootCmd.Flags().StringVar(&city, "city", "", "City name")
 	rootCmd.Flags().StringVarP(&cameraType, "type", "t", "", "Camera type: hikvision, dahua, axis, rtsp, dvr, nvr, avtech, geovision, webcamxp, yawcam, blueiris, all (default: broad CCTV search)")
+	rootCmd.Flags().StringVarP(&rawQuery, "query", "q", "", "Raw Shodan query or natural-language search (AI-powered). When set, --country is optional.")
 	rootCmd.Flags().IntVarP(&limit, "limit", "l", 25, "Maximum number of results")
 	rootCmd.Flags().StringVarP(&outputFmt, "output", "o", "table", "Output format: table, json")
 	rootCmd.Flags().BoolVarP(&verbose, "verbose", "v", false, "Show detailed results with full banner data")
@@ -84,14 +89,30 @@ func init() {
 	rootCmd.Flags().StringVar(&webhookURL, "webhook", "", "Discord webhook URL for alerts (overrides DISCORD_WEBHOOK_URL env)")
 	rootCmd.Flags().BoolVar(&daemon, "daemon", false, "Run continuously in daemon mode (for systemd)")
 	rootCmd.Flags().StringVar(&interval, "interval", "0", "Scan interval in daemon mode (0 = single scan + dashboard only, e.g., 15m, 1h)")
-
-	rootCmd.MarkFlagRequired("country")
 }
 
 func Execute() {
 	if err := rootCmd.Execute(); err != nil {
 		os.Exit(1)
 	}
+}
+
+// isShodanDork returns true if the input looks like a raw Shodan query (contains filters).
+func isShodanDork(input string) bool {
+	filters := []string{"title:", "product:", "server:", "port:", "country:", "city:", "state:",
+		"org:", "net:", "os:", "http.title:", "http.html:", "http.status:", "ssl:",
+		"has_ssl:", "hostname:", "isp:", "asn:", "before:", "after:"}
+	lower := strings.ToLower(input)
+	for _, f := range filters {
+		if strings.Contains(lower, f) {
+			return true
+		}
+	}
+	// Also check for quoted exact-match strings (common in Shodan dorks)
+	if strings.Count(input, "\"") >= 2 {
+		return true
+	}
+	return false
 }
 
 func runScan(cmd *cobra.Command, args []string) error {
@@ -120,17 +141,23 @@ func runScan(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	// Validate country code
-	if len(country) != 2 {
+	// Validate: either --query or --country must be provided
+	if rawQuery == "" && country == "" {
+		return fmt.Errorf("either --country (-c) or --query (-q) is required")
+	}
+	if country != "" && len(country) != 2 {
 		return fmt.Errorf("country must be a 2-letter code (e.g., IN, US, RU)")
 	}
 
-	// Build search query
-	query := &shodan.SearchQuery{
-		CameraType: cameraType,
-		Country:    strings.ToUpper(country),
-		State:      state,
-		City:       city,
+	// Build search query (structured mode, used when --query is not set)
+	var query *shodan.SearchQuery
+	if rawQuery == "" {
+		query = &shodan.SearchQuery{
+			CameraType: cameraType,
+			Country:    strings.ToUpper(country),
+			State:      state,
+			City:       city,
+		}
 	}
 
 	// Initialize clients
@@ -159,9 +186,14 @@ func runScan(cmd *cobra.Command, args []string) error {
 	// Log component status
 	if !daemon {
 		dim := color.New(color.FgHiBlack)
+		green := color.New(color.FgGreen)
 		dim.Println("┌─────────────────────────────────────────────────┐")
-		dim.Printf("│  %-47s│\n", fmt.Sprintf("Country: %s  Limit: %d  Type: %s", strings.ToUpper(country), limit, func() string { if cameraType == "" { return "default" }; return cameraType }()))
-		dim.Printf("│  %-47s│\n", fmt.Sprintf("Shodan:    ✓ connected"))
+		if rawQuery != "" {
+			dim.Printf("│  %-47s│\n", fmt.Sprintf("Query: %s", rawQuery))
+		} else {
+			dim.Printf("│  %-47s│\n", fmt.Sprintf("Country: %s  Limit: %d  Type: %s", strings.ToUpper(country), limit, func() string { if cameraType == "" { return "default" }; return cameraType }()))
+		}
+		dim.Printf("│  %-47s│\n", "Shodan:    ✓ connected")
 		if noAI {
 			dim.Printf("│  %-47s│\n", "Minimax:   ✗ disabled (--no-ai)")
 		} else {
@@ -174,6 +206,7 @@ func runScan(cmd *cobra.Command, args []string) error {
 		}
 		dim.Printf("│  %-47s│\n", "Dashboard: ✓ http://localhost:9847")
 		dim.Println("└─────────────────────────────────────────────────┘")
+		_ = green // suppress unused
 	}
 
 	// Run analysis
@@ -189,7 +222,31 @@ func runScan(cmd *cobra.Command, args []string) error {
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
 
-	// Single run or daemon mode
+	// Handle --query mode: AI-generated or raw Shodan query
+	if rawQuery != "" {
+		resolvedQuery := rawQuery
+
+		// If it looks like natural language (not a Shodan dork), use AI to generate the query
+		if !isShodanDork(rawQuery) && !noAI && minimaxClient != nil {
+			fmt.Println()
+			color.New(color.FgCyan, color.Bold).Println("  🤖 AI QUERY GENERATION")
+			color.New(color.FgHiBlack).Printf("  └─ Translating: %q\n", rawQuery)
+
+			generated, genErr := minimaxClient.GenerateQuery(ctx, rawQuery, "")
+			if genErr != nil {
+				return fmt.Errorf("AI query generation failed: %w", genErr)
+			}
+			resolvedQuery = generated
+			color.New(color.FgGreen).Printf("  ✓ Generated: %s\n", resolvedQuery)
+		}
+
+		if daemon {
+			return runDaemonRaw(ctx, a, resolvedQuery, format)
+		}
+		return runOnceRaw(ctx, a, resolvedQuery, format)
+	}
+
+	// Structured query mode (--country based)
 	if daemon {
 		return runDaemon(ctx, a, query, format)
 	}
@@ -385,4 +442,138 @@ func printBanner() {
 	dim.Println("  IP Camera Security Scanner — Shodan + Minimax M2.7")
 	dim.Printf("  Version %s — https://github.com/xalgord/camscan\n", Version)
 	fmt.Println()
+}
+
+func runOnceRaw(ctx context.Context, a *analyzer.Analyzer, rawQuery string, format output.Format) error {
+	results, total, err := a.RunWithRawQuery(ctx, rawQuery, limit)
+	if err != nil {
+		return err
+	}
+
+	if len(results) == 0 {
+		return nil
+	}
+
+	output.Render(results, total, format, verbose)
+	return nil
+}
+
+func runDaemonRaw(ctx context.Context, a *analyzer.Analyzer, rawQuery string, format output.Format) error {
+	var duration time.Duration
+	var periodic bool
+
+	if interval != "0" {
+		var err error
+		duration, err = time.ParseDuration(interval)
+		if err != nil {
+			return fmt.Errorf("invalid interval %q: %w", interval, err)
+		}
+		periodic = true
+	}
+
+	log.Println("┌─────────────────────────────────────────────────┐")
+	if periodic {
+		log.Printf("│  DAEMON MODE — scanning every %-18s│", duration)
+	} else {
+		log.Printf("│  DAEMON MODE — single scan + dashboard          │")
+	}
+	log.Printf("│  Query:  %-39s│", rawQuery)
+	log.Printf("│  Limit:  %-39d│", limit)
+	log.Printf("│  Dashboard: http://localhost:%-20s│", "9847")
+	log.Println("└─────────────────────────────────────────────────┘")
+
+	// W1: Cache with 24h TTL — won't re-alert the same IP within a day
+	cache := newSeenCache(24 * time.Hour)
+
+	// Run initial scan
+	log.Println()
+	log.Printf("━━━ SCAN #1 ━━━ %s ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", time.Now().Format("2006-01-02 15:04:05"))
+
+	scanStart := time.Now()
+	results, total, scanErr := a.RunWithRawQuery(ctx, rawQuery, limit)
+	if scanErr != nil {
+		log.Printf("  ✗ Initial scan failed after %s: %v", time.Since(scanStart).Round(time.Second), scanErr)
+	} else {
+		var newResults []analyzer.Result
+		for _, r := range results {
+			key := fmt.Sprintf("%s:%d", r.Camera.IP, r.Camera.Port)
+			if !cache.MarkSeen(key) {
+				newResults = append(newResults, r)
+			}
+		}
+		if len(newResults) > 0 {
+			log.Printf("  ├─ Cameras found: %d / Total in Shodan: %d", len(newResults), total)
+			output.Render(newResults, total, format, verbose)
+		} else {
+			log.Printf("  └─ No cameras found")
+		}
+	}
+
+	// If no periodic interval, keep dashboard alive and wait for shutdown
+	if !periodic {
+		log.Println()
+		log.Println("  📊 Dashboard is live — waiting for shutdown signal (Ctrl+C / SIGTERM)")
+		<-ctx.Done()
+		log.Println()
+		log.Println("┌─────────────────────────────────────────────────┐")
+		log.Println("│  SHUTTING DOWN GRACEFULLY                       │")
+		log.Println("└─────────────────────────────────────────────────┘")
+		return nil
+	}
+
+	// Periodic mode — continue scanning on interval
+	ticker := time.NewTicker(duration)
+	defer ticker.Stop()
+
+	scanNum := 2
+	for {
+		nextAt := time.Now().Add(duration).Format("15:04:05")
+		log.Printf("  ⏰ Next scan at %s (in %s)", nextAt, duration)
+
+		select {
+		case <-ctx.Done():
+			log.Println()
+			log.Println("┌─────────────────────────────────────────────────┐")
+			log.Println("│  SHUTTING DOWN GRACEFULLY                       │")
+			log.Printf("│  Completed %d scan cycles                        │", scanNum-1)
+			log.Println("└─────────────────────────────────────────────────┘")
+			return nil
+		case <-ticker.C:
+			// next scan
+		}
+
+		log.Println()
+		log.Printf("━━━ SCAN #%d ━━━ %s ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", scanNum, time.Now().Format("2006-01-02 15:04:05"))
+
+		scanStart = time.Now()
+		results, total, scanErr = a.RunWithRawQuery(ctx, rawQuery, limit)
+		if scanErr != nil {
+			log.Printf("  ✗ Scan #%d failed after %s: %v", scanNum, time.Since(scanStart).Round(time.Second), scanErr)
+		} else {
+			var newResults []analyzer.Result
+			skipped := 0
+			for _, r := range results {
+				key := fmt.Sprintf("%s:%d", r.Camera.IP, r.Camera.Port)
+				if cache.MarkSeen(key) {
+					skipped++
+					continue
+				}
+				newResults = append(newResults, r)
+			}
+
+			if skipped > 0 {
+				log.Printf("  ├─ Skipped %d already-seen cameras (24h dedup)", skipped)
+			}
+
+			if len(newResults) > 0 {
+				log.Printf("  ├─ New cameras: %d / Total in Shodan: %d", len(newResults), total)
+				output.Render(newResults, total, format, verbose)
+			} else {
+				log.Printf("  └─ No new cameras found this cycle")
+			}
+		}
+
+		cache.Prune()
+		scanNum++
+	}
 }

@@ -66,11 +66,11 @@ func (q *SearchQuery) BuildQuery() string {
 	case "geovision":
 		parts = append(parts, `title:"GeoVision"`)
 	case "all":
-		// Broad CCTV search — uses a simple tag that Shodan indexes reliably
-		parts = append(parts, `tag:"webcam"`)
+		// Broad CCTV search — combines multiple camera signatures (no Corporate-only filters)
+		parts = append(parts, `(title:"IP Camera" OR title:"DVR" OR title:"NVR" OR product:"Hikvision" OR product:"Dahua" OR title:"Network Camera" OR server:"webcamXP" OR title:"AXIS" OR title:"GeoVision" OR product:"AVTech" OR title:"Blue Iris" OR "RTSP/1.0 200 OK")`)
 	default:
 		// Default: broad IP camera search
-		parts = append(parts, `title:"IP Camera"`)
+		parts = append(parts, `(title:"IP Camera" OR title:"DVR" OR title:"NVR" OR product:"Hikvision" OR product:"Dahua" OR title:"Network Camera")`)
 	}
 
 	// Location filters
@@ -140,6 +140,51 @@ type APIInfo struct {
 	QueryCredits int    `json:"query_credits"`
 	ScanCredits  int    `json:"scan_credits"`
 	Plan         string `json:"plan"`
+}
+
+// SearchRaw performs a Shodan search with a raw query string (no BuildQuery).
+// Used by the AI query generator and the --query flag.
+func (c *Client) SearchRaw(ctx context.Context, rawQuery string, limit int) (*SearchResult, error) {
+	u, err := url.Parse(baseURL + "/shodan/host/search")
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse Shodan URL: %w", err)
+	}
+	params := url.Values{}
+	params.Set("key", c.apiKey)
+	params.Set("query", rawQuery)
+	params.Set("minify", "false")
+	u.RawQuery = params.Encode()
+
+	req, err := http.NewRequestWithContext(ctx, "GET", u.String(), nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("shodan API request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read response: %w", err)
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("shodan API error (HTTP %d): %s", resp.StatusCode, string(body))
+	}
+
+	var result SearchResult
+	if err := json.Unmarshal(body, &result); err != nil {
+		return nil, fmt.Errorf("failed to parse shodan response: %w", err)
+	}
+
+	if limit > 0 && len(result.Matches) > limit {
+		result.Matches = result.Matches[:limit]
+	}
+
+	return &result, nil
 }
 
 // GetAPIInfo returns info about the API key (credits remaining, plan, etc.)

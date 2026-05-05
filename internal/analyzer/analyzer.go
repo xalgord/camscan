@@ -6,6 +6,7 @@ import (
 	"log"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/xalgord/camscan/internal/dashboard"
@@ -49,6 +50,18 @@ func New(shodanClient *shodan.Client, minimaxClient *minimax.Client, notifier *d
 // W2: Checks Shodan query credits before scanning.
 // I2: Accepts context.Context for cancellation/timeout.
 func (a *Analyzer) Run(ctx context.Context, query *shodan.SearchQuery, limit int) ([]Result, int, error) {
+	queryStr := query.BuildQuery()
+	return a.runWithQuery(ctx, queryStr, limit)
+}
+
+// RunWithRawQuery executes the pipeline using a raw Shodan query string.
+// Supports AI-powered error recovery: if Shodan returns an error, the AI
+// analyzes the error and generates a corrected query (up to 2 retries).
+func (a *Analyzer) RunWithRawQuery(ctx context.Context, rawQuery string, limit int) ([]Result, int, error) {
+	return a.runWithQuery(ctx, rawQuery, limit)
+}
+
+func (a *Analyzer) runWithQuery(ctx context.Context, queryStr string, limit int) ([]Result, int, error) {
 	scanStart := time.Now()
 	cyan := color.New(color.FgCyan, color.Bold)
 	yellow := color.New(color.FgYellow)
@@ -60,18 +73,19 @@ func (a *Analyzer) Run(ctx context.Context, query *shodan.SearchQuery, limit int
 	cyan.Println("═══════════════════════════════════════════════════════════════")
 
 	// W2: Pre-flight check — verify Shodan has enough query credits
+	var shodanPlan string
 	apiInfo, err := a.shodanClient.GetAPIInfo(ctx)
 	if err != nil {
 		log.Printf("  ⚠ Could not verify Shodan credits: %v", err)
+		shodanPlan = "unknown"
 	} else if apiInfo.QueryCredits <= 0 {
 		return nil, 0, fmt.Errorf("shodan has 0 query credits remaining (plan: %s)", apiInfo.Plan)
 	} else {
+		shodanPlan = apiInfo.Plan
 		fmt.Printf("  ├─ Shodan Plan:    %s\n", apiInfo.Plan)
 		fmt.Printf("  ├─ Query Credits:  %d remaining\n", apiInfo.QueryCredits)
 		fmt.Printf("  └─ Scan Credits:   %d remaining\n", apiInfo.ScanCredits)
 	}
-
-	queryStr := query.BuildQuery()
 
 	cyan.Println("\n═══════════════════════════════════════════════════════════════")
 	cyan.Println("  PHASE 2: SHODAN RECONNAISSANCE")
@@ -83,14 +97,48 @@ func (a *Analyzer) Run(ctx context.Context, query *shodan.SearchQuery, limit int
 	// Dashboard: emit scan start
 	a.emitEvent(dashboard.EventScanStart, fmt.Sprintf("Scan started — query: %s, limit: %d", queryStr, limit))
 
-	// Step 1: Discover cameras via Shodan
-	shodanStart := time.Now()
-	searchResult, err := a.shodanClient.Search(ctx, query, limit)
-	if err != nil {
-		a.emitEvent(dashboard.EventLog, fmt.Sprintf("Shodan search failed: %v", err))
-		return nil, 0, fmt.Errorf("shodan search failed: %w", err)
+	// Step 1: Discover cameras via Shodan (with AI error-recovery loop)
+	const maxQueryRetries = 2
+	var searchResult *shodan.SearchResult
+	var shodanDur time.Duration
+	currentQuery := queryStr
+
+	for attempt := 0; attempt <= maxQueryRetries; attempt++ {
+		shodanStart := time.Now()
+		result, searchErr := a.shodanClient.SearchRaw(ctx, currentQuery, limit)
+		shodanDur = time.Since(shodanStart).Round(time.Millisecond)
+
+		if searchErr == nil {
+			searchResult = result
+			if attempt > 0 {
+				green.Printf("  ✓ AI-corrected query succeeded (attempt %d) in %s\n", attempt+1, shodanDur)
+				a.emitEvent(dashboard.EventLog, fmt.Sprintf("AI-corrected query succeeded on attempt %d: %s", attempt+1, currentQuery))
+			}
+			break
+		}
+
+		// If this is the last attempt or AI is disabled, fail
+		if attempt >= maxQueryRetries || a.noAI || a.minimaxClient == nil {
+			a.emitEvent(dashboard.EventLog, fmt.Sprintf("Shodan search failed: %v", searchErr))
+			return nil, 0, fmt.Errorf("shodan search failed: %w", searchErr)
+		}
+
+		// AI error recovery: feed the error to the AI to fix the query
+		yellow.Printf("  ⚠  Shodan query failed: %v\n", searchErr)
+		yellow.Printf("  🤖 Asking AI to fix the query (attempt %d/%d)...\n", attempt+1, maxQueryRetries)
+		a.emitEvent(dashboard.EventLog, fmt.Sprintf("Shodan error: %v — AI fixing query (attempt %d/%d)", searchErr, attempt+1, maxQueryRetries))
+
+		fixedQuery, fixErr := a.minimaxClient.FixQuery(ctx, currentQuery, searchErr.Error(), shodanPlan)
+		if fixErr != nil {
+			yellow.Printf("  ⚠  AI query fix failed: %v\n", fixErr)
+			a.emitEvent(dashboard.EventLog, fmt.Sprintf("AI query fix failed: %v", fixErr))
+			return nil, 0, fmt.Errorf("shodan search failed: %w (AI fix also failed: %v)", searchErr, fixErr)
+		}
+
+		green.Printf("  ✓ AI generated corrected query: %s\n", fixedQuery)
+		a.emitEvent(dashboard.EventLog, fmt.Sprintf("AI corrected query: %s", fixedQuery))
+		currentQuery = fixedQuery
 	}
-	shodanDur := time.Since(shodanStart).Round(time.Millisecond)
 
 	total := searchResult.Total
 	cameras := searchResult.Matches
@@ -141,6 +189,7 @@ func (a *Analyzer) Run(ctx context.Context, query *shodan.SearchQuery, limit int
 	dim.Printf("  Engine: Minimax M2.7 | Concurrency: 3 | Methodology: 6-phase pentest\n\n")
 
 	results := make([]Result, len(cameras))
+	var alertedCount int32 // atomic counter for real-time alerts
 	var wg sync.WaitGroup
 	sem := make(chan struct{}, 3) // Concurrency limit to avoid rate limiting
 
@@ -213,6 +262,13 @@ func (a *Analyzer) Run(ctx context.Context, query *shodan.SearchQuery, limit int
 
 				// Emit full structured analysis for the interactive dashboard
 				a.emitDetailEvent(idx+1, len(cameras), camera, assessment)
+
+				// REAL-TIME Discord alert — send immediately after each camera analysis
+				if a.notifier != nil {
+					if sent := a.sendSingleAlert(camera, assessment); sent {
+						atomic.AddInt32(&alertedCount, 1)
+					}
+				}
 			}
 		}(i, cam)
 	}
@@ -220,16 +276,15 @@ func (a *Analyzer) Run(ctx context.Context, query *shodan.SearchQuery, limit int
 	wg.Wait()
 	fmt.Println()
 
-	// B1: Send Discord alerts sequentially AFTER all analysis is done.
-	// This avoids concurrent goroutines hammering the Discord API.
+	// Send scan summary after all analysis is done
+	alerted := int(atomic.LoadInt32(&alertedCount))
 	if a.notifier != nil {
 		cyan.Println("═══════════════════════════════════════════════════════════════")
-		cyan.Println("  PHASE 4: DISCORD NOTIFICATIONS")
+		cyan.Println("  PHASE 4: DISCORD SUMMARY")
 		cyan.Println("═══════════════════════════════════════════════════════════════")
-		alerted := a.sendAlerts(results)
-		a.sendScanSummary(results, query.BuildQuery(), total, alerted, scanStart)
-		green.Printf("  ✓ Dispatched %d alerts + scan summary\n", alerted)
-		a.emitEvent(dashboard.EventAlertSent, fmt.Sprintf("Dispatched %d Discord alerts", alerted))
+		a.sendScanSummary(results, queryStr, total, alerted, scanStart)
+		green.Printf("  ✓ Sent %d real-time alerts + scan summary\n", alerted)
+		a.emitEvent(dashboard.EventAlertSent, fmt.Sprintf("Dispatched %d real-time Discord alerts", alerted))
 	}
 
 	scanDuration := time.Since(scanStart).Round(time.Second)
@@ -284,59 +339,57 @@ func (a *Analyzer) Run(ctx context.Context, query *shodan.SearchQuery, limit int
 	return results, total, nil
 }
 
-// sendAlerts iterates analyzed results and sends Discord notifications
-// for cameras matching alert criteria. Called sequentially after analysis.
+// sendSingleAlert sends a real-time Discord alert for a single camera result.
+// Called inline during analysis to provide immediate notifications.
 // I3: Triggers on "Critical", "High", open access, or default credentials.
-// Returns the count of successfully sent alerts.
-func (a *Analyzer) sendAlerts(results []Result) int {
-	alerted := 0
-	for _, r := range results {
-		if r.Assessment == nil {
-			continue
-		}
-
-		level := strings.ToLower(r.Assessment.RiskLevel)
-		shouldAlert := r.Assessment.IsOpen ||
-			r.Assessment.DefaultCreds ||
-			level == "critical" ||
-			level == "high"
-
-		if !shouldAlert {
-			continue
-		}
-
-		location := r.Camera.Location.City
-		if location != "" && r.Camera.Location.Country != "" {
-			location += ", " + r.Camera.Location.Country
-		} else if r.Camera.Location.Country != "" {
-			location = r.Camera.Location.Country
-		}
-
-		alert := discord.CameraAlert{
-			IP:                 r.Camera.IP,
-			Port:               r.Camera.Port,
-			Product:            r.Camera.Product,
-			Location:           location,
-			Org:                r.Camera.Org,
-			RiskLevel:          r.Assessment.RiskLevel,
-			RiskScore:          r.Assessment.RiskScore,
-			IsOpen:             r.Assessment.IsOpen,
-			DefaultCreds:       r.Assessment.DefaultCreds,
-			Summary:            r.Assessment.Summary,
-			Vulnerabilities:    r.Assessment.VulnTitles(),
-			ExploitPaths:       r.Assessment.ExploitPaths,
-			CveReferences:      r.Assessment.CveReferences,
-			AccessInstructions: r.Assessment.AccessInstructions,
-		}
-
-		if err := a.notifier.SendAlert(alert); err != nil {
-			log.Printf("  ├─ ⚠ Alert FAILED for %s:%d: %v", r.Camera.IP, r.Camera.Port, err)
-		} else {
-			fmt.Printf("  ├─ 📨 %s:%d → %s %s (Score: %d)\n", r.Camera.IP, r.Camera.Port, risk.Icon(r.Assessment.RiskLevel), r.Assessment.RiskLevel, r.Assessment.RiskScore)
-			alerted++
-		}
+// Returns true if an alert was successfully sent.
+func (a *Analyzer) sendSingleAlert(camera shodan.Camera, assessment *minimax.SecurityAssessment) bool {
+	if assessment == nil {
+		return false
 	}
-	return alerted
+
+	level := strings.ToLower(assessment.RiskLevel)
+	shouldAlert := assessment.IsOpen ||
+		assessment.DefaultCreds ||
+		level == "critical" ||
+		level == "high"
+
+	if !shouldAlert {
+		return false
+	}
+
+	location := camera.Location.City
+	if location != "" && camera.Location.Country != "" {
+		location += ", " + camera.Location.Country
+	} else if camera.Location.Country != "" {
+		location = camera.Location.Country
+	}
+
+	alert := discord.CameraAlert{
+		IP:                 camera.IP,
+		Port:               camera.Port,
+		Product:            camera.Product,
+		Location:           location,
+		Org:                camera.Org,
+		RiskLevel:          assessment.RiskLevel,
+		RiskScore:          assessment.RiskScore,
+		IsOpen:             assessment.IsOpen,
+		DefaultCreds:       assessment.DefaultCreds,
+		Summary:            assessment.Summary,
+		Vulnerabilities:    assessment.VulnTitles(),
+		ExploitPaths:       assessment.ExploitPaths,
+		CveReferences:      assessment.CveReferences,
+		AccessInstructions: assessment.AccessInstructions,
+	}
+
+	if err := a.notifier.SendAlert(alert); err != nil {
+		log.Printf("  ├─ ⚠ Alert FAILED for %s:%d: %v", camera.IP, camera.Port, err)
+		return false
+	}
+
+	fmt.Printf("  📨 %s:%d → %s %s (Score: %d) — sent to Discord\n",
+		camera.IP, camera.Port, risk.Icon(assessment.RiskLevel), assessment.RiskLevel, assessment.RiskScore)
+	return true
 }
 
 // sendScanSummary counts risk levels from results and sends a completion

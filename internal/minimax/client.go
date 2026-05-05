@@ -255,37 +255,156 @@ CRITICAL RULES:
 - If a blank page is expected (e.g., RTSP-only device), say so in access_instructions and do NOT rate it Critical just because the port is open
 - access_instructions MUST always contain at least one entry explaining how to actually reach the device`
 
-// AnalyzeCamera sends camera data to Minimax M2.7 for security analysis.
-// W3: Retries with exponential backoff on 429 rate-limit responses.
-func (c *Client) AnalyzeCamera(ctx context.Context, cameraData string) (*SecurityAssessment, error) {
+// querySystemPrompt instructs the AI to act as a Shodan query expert.
+const querySystemPrompt = `You are a Shodan search query expert. Your job is to translate user intent into VALID Shodan search query strings.
+
+CRITICAL RULES:
+1. You MUST respond with ONLY a valid JSON object — no markdown, no explanation, no code fences.
+2. The Shodan search query MUST use ONLY filters available on ALL Shodan plans (Free, Small Business, etc.)
+3. NEVER use these Corporate/Enterprise-only filters: tag, vuln, ssl.cert.fingerprint, has_screenshot
+4. Always prefer: title, product, server, port, http.title, http.html, org, net, country, city, state
+
+AVAILABLE FILTERS (safe for all plans):
+- title:"keyword" — Banner or page title
+- product:"name" — Product name (e.g., product:"Hikvision")
+- server:"name" — HTTP Server header value
+- http.title:"text" — HTML <title> tag content
+- http.html:"text" — Raw HTML body content
+- port:NUMBER — Specific port
+- country:XX — 2-letter country code
+- city:"name" — City name
+- state:"name" — State/region
+- org:"name" — Organization name
+- net:CIDR — Network range
+- os:"name" — Operating system
+- "exact string" — Full-text banner search
+
+CAMERA-SPECIFIC SIGNATURES you should use:
+- product:"Hikvision" OR product:"Dahua" OR product:"AXIS" OR product:"AVTech"
+- title:"IP Camera" OR title:"DVR" OR title:"NVR" OR title:"Network Camera"
+- server:"webcamXP" OR title:"Blue Iris" OR title:"GeoVision"
+- "RTSP/1.0 200 OK" — RTSP cameras
+- port:554 — RTSP default port
+- port:8080 http.title:"camera" — Web camera interfaces
+
+OUTPUT FORMAT:
+{
+  "query": "the shodan query string",
+  "explanation": "brief explanation of what this query does"
+}`
+
+// fixQuerySystemPrompt instructs the AI to fix failed Shodan queries.
+const fixQuerySystemPrompt = `You are a Shodan search query debugging expert. A previous query failed with an error from the Shodan API. Your job is to analyze the error and produce a CORRECTED query.
+
+CRITICAL RULES:
+1. Respond with ONLY valid JSON — no markdown, no explanation, no code fences.
+2. Fix the SPECIFIC error reported by the Shodan API.
+3. NEVER use Corporate-only filters: tag, vuln, ssl.cert.fingerprint, has_screenshot
+4. If the error mentions a restricted filter, replace it with free-plan-compatible alternatives.
+5. If the error is about syntax, fix the syntax while preserving the original search intent.
+6. If the error is about empty results, broaden the query by removing overly specific filters.
+
+COMMON FIXES:
+- "tag" filter → Replace with title/product/server combinations
+- "vuln" filter → Remove entirely (not available on free plans)
+- Syntax error → Fix quoting, spacing, or boolean operators
+- Empty results → Broaden by removing city/state filters or using OR combinations
+
+OUTPUT FORMAT:
+{
+  "query": "the corrected shodan query string",
+  "explanation": "what was wrong and how you fixed it",
+  "changes": ["list of specific changes made"]
+}`
+
+// GenerateQuery uses AI to translate natural-language user input into a valid Shodan search query.
+func (c *Client) GenerateQuery(ctx context.Context, userInput string, shodanPlan string) (string, error) {
+	prompt := fmt.Sprintf("User request: %s\nShodan plan: %s\nGenerate a Shodan search query for finding IP cameras/CCTV/surveillance devices matching this request.", userInput, shodanPlan)
+
 	reqBody := ChatRequest{
 		Model: model,
 		Messages: []Message{
-			{Role: "system", Content: systemPrompt},
-			{Role: "user", Content: cameraData},
+			{Role: "system", Content: querySystemPrompt},
+			{Role: "user", Content: prompt},
 		},
 	}
 
 	jsonBody, err := json.Marshal(reqBody)
 	if err != nil {
-		return nil, fmt.Errorf("failed to marshal request: %w", err)
+		return "", fmt.Errorf("failed to marshal request: %w", err)
 	}
 
+	content, err := c.doChat(ctx, jsonBody)
+	if err != nil {
+		return "", err
+	}
+
+	// Parse the JSON response
+	jsonStr := extractJSON(content)
+	var result struct {
+		Query       string `json:"query"`
+		Explanation string `json:"explanation"`
+	}
+	if err := json.Unmarshal([]byte(jsonStr), &result); err != nil {
+		// Fallback: if AI returned a raw query string, use it directly
+		return strings.TrimSpace(content), nil
+	}
+
+	return result.Query, nil
+}
+
+// FixQuery uses AI to analyze a Shodan error and produce a corrected query.
+func (c *Client) FixQuery(ctx context.Context, failedQuery string, errorMsg string, shodanPlan string) (string, error) {
+	prompt := fmt.Sprintf("Failed query: %s\nShodan API error: %s\nShodan plan: %s\nFix this query so it works correctly.", failedQuery, errorMsg, shodanPlan)
+
+	reqBody := ChatRequest{
+		Model: model,
+		Messages: []Message{
+			{Role: "system", Content: fixQuerySystemPrompt},
+			{Role: "user", Content: prompt},
+		},
+	}
+
+	jsonBody, err := json.Marshal(reqBody)
+	if err != nil {
+		return "", fmt.Errorf("failed to marshal request: %w", err)
+	}
+
+	content, err := c.doChat(ctx, jsonBody)
+	if err != nil {
+		return "", err
+	}
+
+	jsonStr := extractJSON(content)
+	var result struct {
+		Query       string   `json:"query"`
+		Explanation string   `json:"explanation"`
+		Changes     []string `json:"changes"`
+	}
+	if err := json.Unmarshal([]byte(jsonStr), &result); err != nil {
+		return strings.TrimSpace(content), nil
+	}
+
+	return result.Query, nil
+}
+
+// doChat performs a chat completion request and returns the content string.
+// Shared by AnalyzeCamera, GenerateQuery, and FixQuery.
+func (c *Client) doChat(ctx context.Context, jsonBody []byte) (string, error) {
 	var lastErr error
 	for attempt := 0; attempt <= maxRetries; attempt++ {
 		if attempt > 0 {
-			// Exponential backoff: 2s, 4s, 8s
 			backoff := time.Duration(math.Pow(2, float64(attempt))) * time.Second
 			select {
 			case <-ctx.Done():
-				return nil, ctx.Err()
+				return "", ctx.Err()
 			case <-time.After(backoff):
 			}
 		}
 
 		req, err := http.NewRequestWithContext(ctx, "POST", apiURL, bytes.NewBuffer(jsonBody))
 		if err != nil {
-			return nil, fmt.Errorf("failed to create request: %w", err)
+			return "", fmt.Errorf("failed to create request: %w", err)
 		}
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("Authorization", "Bearer "+c.apiKey)
@@ -303,13 +422,12 @@ func (c *Client) AnalyzeCamera(ctx context.Context, cameraData string) (*Securit
 			continue
 		}
 
-		// W3: Retry on 429 rate limit
 		if resp.StatusCode == http.StatusTooManyRequests {
 			retryAfter := resp.Header.Get("Retry-After")
 			if secs, parseErr := strconv.Atoi(retryAfter); parseErr == nil && secs > 0 {
 				select {
 				case <-ctx.Done():
-					return nil, ctx.Err()
+					return "", ctx.Err()
 				case <-time.After(time.Duration(secs) * time.Second):
 				}
 			}
@@ -318,44 +436,69 @@ func (c *Client) AnalyzeCamera(ctx context.Context, cameraData string) (*Securit
 		}
 
 		if resp.StatusCode != http.StatusOK {
-			return nil, fmt.Errorf("minimax API error (HTTP %d): %s", resp.StatusCode, string(body))
+			return "", fmt.Errorf("minimax API error (HTTP %d): %s", resp.StatusCode, string(body))
 		}
 
-		return c.parseResponse(body)
+		// Parse the chat response to extract content
+		var chatResp ChatResponse
+		if err := json.Unmarshal(body, &chatResp); err != nil {
+			return "", fmt.Errorf("failed to parse minimax response: %w", err)
+		}
+
+		if len(chatResp.Choices) == 0 {
+			return "", fmt.Errorf("minimax returned no choices")
+		}
+
+		content := chatResp.Choices[0].Message.Content
+		content = strings.TrimSpace(content)
+
+		// Strip <think>...</think> reasoning tags
+		if idx := strings.Index(content, "</think>"); idx != -1 {
+			content = strings.TrimSpace(content[idx+len("</think>"):])
+		} else if strings.HasPrefix(content, "<think>") {
+			if jsonStart := strings.Index(content, "{"); jsonStart != -1 {
+				content = content[jsonStart:]
+			}
+		}
+
+		// Strip markdown code fences
+		content = strings.TrimPrefix(content, "```json")
+		content = strings.TrimPrefix(content, "```")
+		content = strings.TrimSuffix(content, "```")
+		content = strings.TrimSpace(content)
+
+		return content, nil
 	}
 
-	return nil, fmt.Errorf("minimax API exhausted retries: %w", lastErr)
+	return "", fmt.Errorf("minimax API exhausted retries: %w", lastErr)
 }
 
-// parseResponse extracts the SecurityAssessment from a raw API response.
-func (c *Client) parseResponse(body []byte) (*SecurityAssessment, error) {
-	var chatResp ChatResponse
-	if err := json.Unmarshal(body, &chatResp); err != nil {
-		return nil, fmt.Errorf("failed to parse minimax response: %w", err)
+// AnalyzeCamera sends camera data to Minimax M2.7 for security analysis.
+// Uses the shared doChat method for HTTP request handling and retries.
+func (c *Client) AnalyzeCamera(ctx context.Context, cameraData string) (*SecurityAssessment, error) {
+	reqBody := ChatRequest{
+		Model: model,
+		Messages: []Message{
+			{Role: "system", Content: systemPrompt},
+			{Role: "user", Content: cameraData},
+		},
 	}
 
-	if len(chatResp.Choices) == 0 {
-		return nil, fmt.Errorf("minimax returned no choices")
+	jsonBody, err := json.Marshal(reqBody)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal request: %w", err)
 	}
 
-	content := chatResp.Choices[0].Message.Content
-	content = strings.TrimSpace(content)
-
-	// Strip <think>...</think> reasoning tags (M2.7 includes these)
-	if idx := strings.Index(content, "</think>"); idx != -1 {
-		content = strings.TrimSpace(content[idx+len("</think>"):])
-	} else if strings.HasPrefix(content, "<think>") {
-		if jsonStart := strings.Index(content, "{"); jsonStart != -1 {
-			content = content[jsonStart:]
-		}
+	content, err := c.doChat(ctx, jsonBody)
+	if err != nil {
+		return nil, err
 	}
 
-	// Strip markdown code fences if present
-	content = strings.TrimPrefix(content, "```json")
-	content = strings.TrimPrefix(content, "```")
-	content = strings.TrimSuffix(content, "```")
-	content = strings.TrimSpace(content)
+	return c.parseContent(content)
+}
 
+// parseContent extracts a SecurityAssessment from an already-cleaned AI content string.
+func (c *Client) parseContent(content string) (*SecurityAssessment, error) {
 	// I4: Robust JSON extraction — find first '{' and last '}'
 	jsonContent := extractJSON(content)
 
