@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"net/url"
 	"strings"
@@ -52,9 +53,9 @@ func (q *SearchQuery) BuildQuery() string {
 	case "rtsp":
 		parts = append(parts, `"RTSP/1.0 200 OK"`)
 	case "dvr":
-		parts = append(parts, `title:"DVR" http.title:"DVR"`)
+		parts = append(parts, `http.title:"DVR"`)
 	case "nvr":
-		parts = append(parts, `title:"NVR" http.title:"NVR"`)
+		parts = append(parts, `http.title:"NVR"`)
 	case "webcamxp":
 		parts = append(parts, `server:"webcamXP"`)
 	case "yawcam":
@@ -62,15 +63,15 @@ func (q *SearchQuery) BuildQuery() string {
 	case "blueiris":
 		parts = append(parts, `title:"Blue Iris"`)
 	case "avtech":
-		parts = append(parts, `product:"AVTech" title:"DVR"`)
+		parts = append(parts, `product:"AVTech"`)
 	case "geovision":
 		parts = append(parts, `title:"GeoVision"`)
 	case "all":
-		// Broad search across all CCTV/surveillance camera types
-		parts = append(parts, `(title:"IP Camera" OR "RTSP/1.0" OR product:"Hikvision" OR product:"Dahua" OR product:"AXIS" OR title:"DVR" OR title:"NVR" OR server:"webcamXP" OR title:"Network Camera" OR title:"CCTV")`)
+		// Broad CCTV search — uses a simple tag that Shodan indexes reliably
+		parts = append(parts, `tag:"webcam"`)
 	default:
-		// Default: CCTV / IP surveillance cameras
-		parts = append(parts, `(title:"IP Camera" OR title:"Network Camera" OR title:"DVR" OR title:"NVR" OR title:"CCTV" OR product:"Hikvision" OR product:"Dahua")`)
+		// Default: broad IP camera search
+		parts = append(parts, `title:"IP Camera"`)
 	}
 
 	// Location filters
@@ -90,6 +91,7 @@ func (q *SearchQuery) BuildQuery() string {
 // Search performs a host search on Shodan and returns discovered cameras.
 func (c *Client) Search(ctx context.Context, query *SearchQuery, limit int) (*SearchResult, error) {
 	q := query.BuildQuery()
+	log.Printf("Shodan query: %s", q)
 
 	// Build request URL (B6: handle parse error)
 	u, err := url.Parse(baseURL + "/shodan/host/search")
