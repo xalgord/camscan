@@ -51,15 +51,17 @@
 
 ### Install
 
+**One-liner** (requires Go 1.21+):
+
+```bash
+go install github.com/xalgord/camscan@latest
+```
+
+**From source:**
+
 ```bash
 git clone https://github.com/xalgord/camscan.git
 cd camscan
-go build -o camscan .
-```
-
-Build with version info:
-
-```bash
 go build -ldflags "-X github.com/xalgord/camscan/cmd.Version=1.0.0" -o camscan .
 ```
 
