@@ -122,6 +122,8 @@ func runInstall(cmd *cobra.Command, args []string) error {
 		if err != nil {
 			return fmt.Errorf("read binary: %w", err)
 		}
+		// Remove first to avoid "text file busy" if the old binary is running
+		os.Remove(dst)
 		if err := os.WriteFile(dst, input, 0755); err != nil {
 			return fmt.Errorf("write binary: %w", err)
 		}
