@@ -6,6 +6,7 @@ import (
 	"log"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/xalgord/camscan/internal/discord"
 	"github.com/xalgord/camscan/internal/minimax"
@@ -45,6 +46,7 @@ func New(shodanClient *shodan.Client, minimaxClient *minimax.Client, notifier *d
 // W2: Checks Shodan query credits before scanning.
 // I2: Accepts context.Context for cancellation/timeout.
 func (a *Analyzer) Run(ctx context.Context, query *shodan.SearchQuery, limit int) ([]Result, int, error) {
+	scanStart := time.Now()
 	cyan := color.New(color.FgCyan, color.Bold)
 	yellow := color.New(color.FgYellow)
 	green := color.New(color.FgGreen)
@@ -135,7 +137,8 @@ func (a *Analyzer) Run(ctx context.Context, query *shodan.SearchQuery, limit int
 	// B1: Send Discord alerts sequentially AFTER all analysis is done.
 	// This avoids concurrent goroutines hammering the Discord API.
 	if a.notifier != nil {
-		a.sendAlerts(results)
+		alerted := a.sendAlerts(results)
+		a.sendScanSummary(results, query.BuildQuery(), total, alerted, scanStart)
 	}
 
 	return results, total, nil
@@ -144,7 +147,9 @@ func (a *Analyzer) Run(ctx context.Context, query *shodan.SearchQuery, limit int
 // sendAlerts iterates analyzed results and sends Discord notifications
 // for cameras matching alert criteria. Called sequentially after analysis.
 // I3: Triggers on "Critical", "High", open access, or default credentials.
-func (a *Analyzer) sendAlerts(results []Result) {
+// Returns the count of successfully sent alerts.
+func (a *Analyzer) sendAlerts(results []Result) int {
+	alerted := 0
 	for _, r := range results {
 		if r.Assessment == nil {
 			continue
@@ -184,7 +189,56 @@ func (a *Analyzer) sendAlerts(results []Result) {
 			log.Printf("  ⚠ Discord alert failed for %s:%d: %v", r.Camera.IP, r.Camera.Port, err)
 		} else {
 			fmt.Printf("  📨 Discord alert sent for %s:%d\n", r.Camera.IP, r.Camera.Port)
+			alerted++
 		}
+	}
+	return alerted
+}
+
+// sendScanSummary counts risk levels from results and sends a completion
+// notification to Discord.
+func (a *Analyzer) sendScanSummary(results []Result, query string, totalShodan, alerted int, scanStart time.Time) {
+	var crit, high, med, low, unknown, errors int
+	for _, r := range results {
+		if r.Error != "" {
+			errors++
+			continue
+		}
+		if r.Assessment == nil {
+			continue
+		}
+		switch strings.ToLower(r.Assessment.RiskLevel) {
+		case "critical":
+			crit++
+		case "high":
+			high++
+		case "medium":
+			med++
+		case "low":
+			low++
+		default:
+			unknown++
+		}
+	}
+
+	summary := discord.ScanSummary{
+		Query:       query,
+		TotalShodan: totalShodan,
+		Scanned:     len(results),
+		Alerted:     alerted,
+		Critical:    crit,
+		High:        high,
+		Medium:      med,
+		Low:         low,
+		Unknown:     unknown,
+		Errors:      errors,
+		Duration:    time.Since(scanStart),
+	}
+
+	if err := a.notifier.SendScanSummary(summary); err != nil {
+		log.Printf("  ⚠ Discord scan summary failed: %v", err)
+	} else {
+		log.Println("  📋 Discord scan summary sent")
 	}
 }
 

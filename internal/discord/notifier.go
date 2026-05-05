@@ -165,3 +165,103 @@ func (n *Notifier) SendAlert(alert CameraAlert) error {
 
 	return fmt.Errorf("discord webhook rate limited after 3 retries")
 }
+
+// ScanSummary holds data for the scan-completion notification.
+type ScanSummary struct {
+	Query        string
+	TotalShodan  int
+	Scanned      int
+	Alerted      int
+	Critical     int
+	High         int
+	Medium       int
+	Low          int
+	Unknown      int
+	Errors       int
+	Duration     time.Duration
+}
+
+// SendScanSummary sends a scan-completion embed to Discord.
+func (n *Notifier) SendScanSummary(s ScanSummary) error {
+	// Choose embed color based on worst finding
+	embedColor := 0x2ECC71 // green — clean scan
+	if s.Critical > 0 {
+		embedColor = 0xE74C3C // red
+	} else if s.High > 0 {
+		embedColor = 0xF39C12 // orange
+	} else if s.Medium > 0 {
+		embedColor = 0xF1C40F // yellow
+	}
+
+	riskBreakdown := fmt.Sprintf(
+		"🔴 Critical: **%d** │ 🟠 High: **%d** │ 🟡 Medium: **%d** │ 🟢 Low: **%d**",
+		s.Critical, s.High, s.Medium, s.Low,
+	)
+	if s.Unknown > 0 {
+		riskBreakdown += fmt.Sprintf(" │ ⚪ Unknown: **%d**", s.Unknown)
+	}
+
+	fields := []Field{
+		{Name: "🔎 Query", Value: fmt.Sprintf("`%s`", s.Query), Inline: false},
+		{Name: "📊 Risk Breakdown", Value: riskBreakdown, Inline: false},
+		{Name: "📷 Cameras Scanned", Value: fmt.Sprintf("%d", s.Scanned), Inline: true},
+		{Name: "🌐 Total in Shodan", Value: fmt.Sprintf("%d", s.TotalShodan), Inline: true},
+		{Name: "🔔 Alerts Sent", Value: fmt.Sprintf("%d", s.Alerted), Inline: true},
+		{Name: "⏱️ Duration", Value: s.Duration.Truncate(time.Second).String(), Inline: true},
+	}
+
+	if s.Errors > 0 {
+		fields = append(fields, Field{Name: "❌ Analysis Errors", Value: fmt.Sprintf("%d", s.Errors), Inline: true})
+	}
+
+	title := "✅ Scan Complete"
+	if s.Alerted > 0 {
+		title = fmt.Sprintf("⚠️ Scan Complete — %d Alert(s) Sent", s.Alerted)
+	}
+
+	embed := Embed{
+		Title:     title,
+		Color:     embedColor,
+		Fields:    fields,
+		Footer:    &Footer{Text: "CamScan • Scan Summary"},
+		Timestamp: time.Now().UTC().Format(time.RFC3339),
+	}
+
+	payload := webhookPayload{
+		Username: "CamScan",
+		Embeds:   []Embed{embed},
+	}
+
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("failed to marshal summary payload: %w", err)
+	}
+
+	for attempt := 0; attempt < 3; attempt++ {
+		resp, err := n.httpClient.Post(n.webhookURL, "application/json", bytes.NewBuffer(body))
+		if err != nil {
+			return fmt.Errorf("failed to send summary webhook: %w", err)
+		}
+
+		respBody, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+
+		if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+			return nil
+		}
+
+		if resp.StatusCode == http.StatusTooManyRequests {
+			retryAfter := resp.Header.Get("Retry-After")
+			wait := 5 * time.Second
+			if secs, parseErr := strconv.Atoi(retryAfter); parseErr == nil && secs > 0 {
+				wait = time.Duration(secs) * time.Second
+			}
+			time.Sleep(wait)
+			continue
+		}
+
+		return fmt.Errorf("discord summary webhook returned HTTP %d: %s", resp.StatusCode, string(respBody))
+	}
+
+	return fmt.Errorf("discord summary webhook rate limited after 3 retries")
+}
