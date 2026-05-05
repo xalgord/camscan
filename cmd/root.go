@@ -66,6 +66,7 @@ All analysis is passive — no connections are made to discovered devices.`,
   camscan --country US --city "New York" --type hikvision
   camscan -c RU --city Moscow -v --limit 5
   camscan --country JP --no-ai --output json
+  camscan --country IN --daemon --webhook https://discord.com/api/webhooks/...
   camscan --country IN --daemon --interval 30m --webhook https://discord.com/api/webhooks/...`,
 	RunE:    runScan,
 	Version: Version,
@@ -82,7 +83,7 @@ func init() {
 	rootCmd.Flags().BoolVar(&noAI, "no-ai", false, "Skip Minimax AI analysis, show Shodan results only")
 	rootCmd.Flags().StringVar(&webhookURL, "webhook", "", "Discord webhook URL for alerts (overrides DISCORD_WEBHOOK_URL env)")
 	rootCmd.Flags().BoolVar(&daemon, "daemon", false, "Run continuously in daemon mode (for systemd)")
-	rootCmd.Flags().StringVar(&interval, "interval", "30m", "Scan interval in daemon mode (e.g., 15m, 1h, 2h30m)")
+	rootCmd.Flags().StringVar(&interval, "interval", "0", "Scan interval in daemon mode (0 = single scan + dashboard only, e.g., 15m, 1h)")
 
 	rootCmd.MarkFlagRequired("country")
 }
@@ -252,34 +253,97 @@ func (c *seenCache) Prune() {
 }
 
 func runDaemon(ctx context.Context, a *analyzer.Analyzer, query *shodan.SearchQuery, format output.Format) error {
-	duration, err := time.ParseDuration(interval)
-	if err != nil {
-		return fmt.Errorf("invalid interval %q: %w", interval, err)
+	var duration time.Duration
+	var periodic bool
+
+	if interval != "0" {
+		var err error
+		duration, err = time.ParseDuration(interval)
+		if err != nil {
+			return fmt.Errorf("invalid interval %q: %w", interval, err)
+		}
+		periodic = true
 	}
 
 	log.Println("┌─────────────────────────────────────────────────┐")
-	log.Printf("│  DAEMON MODE — scanning every %-18s│", duration)
+	if periodic {
+		log.Printf("│  DAEMON MODE — scanning every %-18s│", duration)
+	} else {
+		log.Printf("│  DAEMON MODE — single scan + dashboard          │")
+	}
 	log.Printf("│  Query:  %-39s│", query.BuildQuery())
 	log.Printf("│  Limit:  %-39d│", limit)
+	log.Printf("│  Dashboard: http://localhost:%-20s│", "9847")
 	log.Println("└─────────────────────────────────────────────────┘")
 
 	// W1: Cache with 24h TTL — won't re-alert the same IP within a day
 	cache := newSeenCache(24 * time.Hour)
 
+	// Run initial scan
+	log.Println()
+	log.Printf("━━━ SCAN #1 ━━━ %s ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", time.Now().Format("2006-01-02 15:04:05"))
+
+	scanStart := time.Now()
+	results, total, scanErr := a.Run(ctx, query, limit)
+	if scanErr != nil {
+		log.Printf("  ✗ Initial scan failed after %s: %v", time.Since(scanStart).Round(time.Second), scanErr)
+	} else {
+		var newResults []analyzer.Result
+		for _, r := range results {
+			key := fmt.Sprintf("%s:%d", r.Camera.IP, r.Camera.Port)
+			if !cache.MarkSeen(key) {
+				newResults = append(newResults, r)
+			}
+		}
+		if len(newResults) > 0 {
+			log.Printf("  ├─ Cameras found: %d / Total in Shodan: %d", len(newResults), total)
+			output.Render(newResults, total, format, verbose)
+		} else {
+			log.Printf("  └─ No cameras found")
+		}
+	}
+
+	// If no periodic interval, keep dashboard alive and wait for shutdown
+	if !periodic {
+		log.Println()
+		log.Println("  📊 Dashboard is live — waiting for shutdown signal (Ctrl+C / SIGTERM)")
+		<-ctx.Done()
+		log.Println()
+		log.Println("┌─────────────────────────────────────────────────┐")
+		log.Println("│  SHUTTING DOWN GRACEFULLY                       │")
+		log.Println("└─────────────────────────────────────────────────┘")
+		return nil
+	}
+
+	// Periodic mode — continue scanning on interval
 	ticker := time.NewTicker(duration)
 	defer ticker.Stop()
 
-	scanNum := 1
+	scanNum := 2
 	for {
+		nextAt := time.Now().Add(duration).Format("15:04:05")
+		log.Printf("  ⏰ Next scan at %s (in %s)", nextAt, duration)
+
+		select {
+		case <-ctx.Done():
+			log.Println()
+			log.Println("┌─────────────────────────────────────────────────┐")
+			log.Println("│  SHUTTING DOWN GRACEFULLY                       │")
+			log.Printf("│  Completed %d scan cycles                        │", scanNum-1)
+			log.Println("└─────────────────────────────────────────────────┘")
+			return nil
+		case <-ticker.C:
+			// next scan
+		}
+
 		log.Println()
 		log.Printf("━━━ SCAN #%d ━━━ %s ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", scanNum, time.Now().Format("2006-01-02 15:04:05"))
 
-		scanStart := time.Now()
-		results, total, scanErr := a.Run(ctx, query, limit)
+		scanStart = time.Now()
+		results, total, scanErr = a.Run(ctx, query, limit)
 		if scanErr != nil {
 			log.Printf("  ✗ Scan #%d failed after %s: %v", scanNum, time.Since(scanStart).Round(time.Second), scanErr)
 		} else {
-			// W1: Filter out previously seen results before output
 			var newResults []analyzer.Result
 			skipped := 0
 			for _, r := range results {
@@ -303,24 +367,8 @@ func runDaemon(ctx context.Context, a *analyzer.Analyzer, query *shodan.SearchQu
 			}
 		}
 
-		// Periodically prune the cache
 		cache.Prune()
 		scanNum++
-
-		nextAt := time.Now().Add(duration).Format("15:04:05")
-		log.Printf("  ⏰ Next scan at %s (in %s)", nextAt, duration)
-
-		select {
-		case <-ctx.Done():
-			log.Println()
-			log.Println("┌─────────────────────────────────────────────────┐")
-			log.Println("│  SHUTTING DOWN GRACEFULLY                       │")
-			log.Printf("│  Completed %d scan cycles                        │", scanNum-1)
-			log.Println("└─────────────────────────────────────────────────┘")
-			return nil
-		case <-ticker.C:
-			// next iteration
-		}
 	}
 }
 
