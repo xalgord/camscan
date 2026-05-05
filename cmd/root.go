@@ -13,6 +13,7 @@ import (
 
 	"github.com/xalgord/camscan/config"
 	"github.com/xalgord/camscan/internal/analyzer"
+	"github.com/xalgord/camscan/internal/dashboard"
 	"github.com/xalgord/camscan/internal/discord"
 	"github.com/xalgord/camscan/internal/minimax"
 	"github.com/xalgord/camscan/internal/output"
@@ -136,8 +137,13 @@ func runScan(cmd *cobra.Command, args []string) error {
 		log.Println("Discord alerts enabled")
 	}
 
+	// Start the real-time dashboard
+	hub := dashboard.NewHub()
+	dashServer := dashboard.NewServer(hub, 9847)
+	dashServer.Start()
+
 	// Run analysis
-	a := analyzer.New(shodanClient, minimaxClient, notifier, noAI)
+	a := analyzer.New(shodanClient, minimaxClient, notifier, hub, noAI)
 
 	// Determine output format
 	format := output.FormatTable

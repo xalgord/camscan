@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/xalgord/camscan/internal/dashboard"
 	"github.com/xalgord/camscan/internal/discord"
 	"github.com/xalgord/camscan/internal/minimax"
 	"github.com/xalgord/camscan/internal/risk"
@@ -28,15 +29,17 @@ type Analyzer struct {
 	shodanClient  *shodan.Client
 	minimaxClient *minimax.Client
 	notifier      *discord.Notifier
+	hub           *dashboard.Hub
 	noAI          bool
 }
 
 // New creates a new Analyzer instance.
-func New(shodanClient *shodan.Client, minimaxClient *minimax.Client, notifier *discord.Notifier, noAI bool) *Analyzer {
+func New(shodanClient *shodan.Client, minimaxClient *minimax.Client, notifier *discord.Notifier, hub *dashboard.Hub, noAI bool) *Analyzer {
 	return &Analyzer{
 		shodanClient:  shodanClient,
 		minimaxClient: minimaxClient,
 		notifier:      notifier,
+		hub:           hub,
 		noAI:          noAI,
 	}
 }
@@ -64,9 +67,13 @@ func (a *Analyzer) Run(ctx context.Context, query *shodan.SearchQuery, limit int
 	queryStr := query.BuildQuery()
 	cyan.Printf("\n🔍 Searching Shodan: %s\n", queryStr)
 
+	// Dashboard: emit scan start
+	a.emitEvent(dashboard.EventScanStart, fmt.Sprintf("Scan started — query: %s, limit: %d", queryStr, limit))
+
 	// Step 1: Discover cameras via Shodan
 	searchResult, err := a.shodanClient.Search(ctx, query, limit)
 	if err != nil {
+		a.emitEvent(dashboard.EventLog, fmt.Sprintf("Shodan search failed: %v", err))
 		return nil, 0, fmt.Errorf("shodan search failed: %w", err)
 	}
 
@@ -75,10 +82,12 @@ func (a *Analyzer) Run(ctx context.Context, query *shodan.SearchQuery, limit int
 
 	if len(cameras) == 0 {
 		yellow.Println("⚠  No cameras found matching your query.")
+		a.emitEvent(dashboard.EventScanComplete, "No cameras found matching query.")
 		return nil, total, nil
 	}
 
 	green.Printf("✓  Found %d cameras (total in Shodan: %d)\n", len(cameras), total)
+	a.emitEvent(dashboard.EventCameraFound, fmt.Sprintf("Discovered %d cameras (total in Shodan: %d)", len(cameras), total))
 
 	// Step 2: If AI analysis is disabled, return raw results
 	if a.noAI {
@@ -120,6 +129,7 @@ func (a *Analyzer) Run(ctx context.Context, query *shodan.SearchQuery, limit int
 					Error:  analyzeErr.Error(),
 				}
 				fmt.Printf("  [%d/%d] %s:%d — ❌ AI analysis failed\n", idx+1, len(cameras), camera.IP, camera.Port)
+				a.emitEvent(dashboard.EventAnalysis, fmt.Sprintf("[%d/%d] %s:%d — ❌ AI analysis failed: %s", idx+1, len(cameras), camera.IP, camera.Port, analyzeErr.Error()))
 			} else {
 				results[idx] = Result{
 					Camera:     camera,
@@ -127,6 +137,7 @@ func (a *Analyzer) Run(ctx context.Context, query *shodan.SearchQuery, limit int
 				}
 				icon := risk.Icon(assessment.RiskLevel)
 				fmt.Printf("  [%d/%d] %s:%d — %s %s\n", idx+1, len(cameras), camera.IP, camera.Port, icon, assessment.RiskLevel)
+				a.emitEvent(dashboard.EventAnalysis, fmt.Sprintf("[%d/%d] %s:%d — %s %s", idx+1, len(cameras), camera.IP, camera.Port, icon, assessment.RiskLevel))
 			}
 		}(i, cam)
 	}
@@ -139,7 +150,11 @@ func (a *Analyzer) Run(ctx context.Context, query *shodan.SearchQuery, limit int
 	if a.notifier != nil {
 		alerted := a.sendAlerts(results)
 		a.sendScanSummary(results, query.BuildQuery(), total, alerted, scanStart)
+		a.emitEvent(dashboard.EventAlertSent, fmt.Sprintf("Dispatched %d Discord alerts", alerted))
 	}
+
+	scanDuration := time.Since(scanStart).Round(time.Second)
+	a.emitEvent(dashboard.EventScanComplete, fmt.Sprintf("Scan finished — %d cameras analyzed in %s", len(results), scanDuration))
 
 	return results, total, nil
 }
@@ -288,4 +303,15 @@ func buildCameraPrompt(cam shodan.Camera) string {
 	sb.WriteString(fmt.Sprintf("\n=== RAW BANNER ===\n%s\n", banner))
 
 	return sb.String()
+}
+
+// emitEvent sends a named event to the dashboard hub, if configured.
+func (a *Analyzer) emitEvent(eventType dashboard.EventType, message string) {
+	if a.hub == nil {
+		return
+	}
+	a.hub.Broadcast(dashboard.Event{
+		Type: eventType,
+		Data: message,
+	})
 }

@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CamScan Dashboard</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+:root{--bg:#0a0e17;--surface:#111827;--surface2:#1a2332;--border:#1e293b;--text:#e2e8f0;--text2:#94a3b8;--accent:#6366f1;--red:#ef4444;--orange:#f97316;--yellow:#eab308;--green:#22c55e;--cyan:#06b6d4}
+body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-height:100vh;overflow-x:hidden}
+.header{background:linear-gradient(135deg,rgba(99,102,241,.15),rgba(6,182,212,.1));border-bottom:1px solid var(--border);padding:16px 24px;display:flex;align-items:center;justify-content:space-between;backdrop-filter:blur(20px);position:sticky;top:0;z-index:100}
+.header h1{font-size:20px;font-weight:700;background:linear-gradient(135deg,#818cf8,#06b6d4);-webkit-background-clip:text;-webkit-text-fill-color:transparent}
+.header .status{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--text2)}
+.status .dot{width:8px;height:8px;border-radius:50%;background:var(--green);animation:pulse 2s infinite}
+.status.scanning .dot{background:var(--cyan);animation:pulse 1s infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
+.stats-bar{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:12px;padding:16px 24px;border-bottom:1px solid var(--border)}
+.stat-card{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:14px 16px;text-align:center;transition:transform .2s}
+.stat-card:hover{transform:translateY(-2px)}
+.stat-card .value{font-size:28px;font-weight:700;font-family:'JetBrains Mono',monospace}
+.stat-card .label{font-size:11px;color:var(--text2);text-transform:uppercase;letter-spacing:.5px;margin-top:4px}
+.stat-card.critical .value{color:var(--red)}
+.stat-card.high .value{color:var(--orange)}
+.stat-card.medium .value{color:var(--yellow)}
+.stat-card.low .value{color:var(--green)}
+.stat-card.total .value{color:var(--cyan)}
+.stat-card.alerts .value{color:#a78bfa}
+.controls{display:flex;align-items:center;gap:12px;padding:12px 24px;border-bottom:1px solid var(--border);background:var(--surface)}
+.controls button{background:var(--surface2);border:1px solid var(--border);color:var(--text2);padding:6px 14px;border-radius:6px;cursor:pointer;font-size:12px;font-family:'Inter',sans-serif;transition:all .2s}
+.controls button:hover{border-color:var(--accent);color:var(--text)}
+.controls button.active{background:var(--accent);border-color:var(--accent);color:#fff}
+.controls .query{margin-left:auto;font-family:'JetBrains Mono',monospace;font-size:12px;color:var(--text2);max-width:400px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.log-container{padding:12px 24px;display:flex;flex-direction:column;gap:6px;padding-bottom:80px}
+.log-entry{display:flex;gap:12px;padding:10px 14px;border-radius:8px;background:var(--surface);border:1px solid var(--border);animation:slideIn .3s ease;font-size:13px;line-height:1.5}
+@keyframes slideIn{from{opacity:0;transform:translateY(-8px)}to{opacity:1;transform:translateY(0)}}
+.log-entry .time{font-family:'JetBrains Mono',monospace;color:var(--text2);font-size:11px;white-space:nowrap;min-width:70px;padding-top:1px}
+.log-entry .icon{font-size:16px;min-width:20px;text-align:center}
+.log-entry .content{flex:1;word-break:break-word}
+.log-entry .content .title{font-weight:600;margin-bottom:2px}
+.log-entry .content .detail{color:var(--text2);font-size:12px}
+.log-entry .badge{font-size:11px;padding:2px 8px;border-radius:4px;font-weight:600;text-transform:uppercase;white-space:nowrap;height:fit-content}
+.badge.critical{background:rgba(239,68,68,.15);color:var(--red);border:1px solid rgba(239,68,68,.3)}
+.badge.high{background:rgba(249,115,22,.15);color:var(--orange);border:1px solid rgba(249,115,22,.3)}
+.badge.medium{background:rgba(234,179,8,.15);color:var(--yellow);border:1px solid rgba(234,179,8,.3)}
+.badge.low{background:rgba(34,197,94,.15);color:var(--green);border:1px solid rgba(34,197,94,.3)}
+.badge.info{background:rgba(6,182,212,.15);color:var(--cyan);border:1px solid rgba(6,182,212,.3)}
+.log-entry.scan-start{border-left:3px solid var(--cyan)}
+.log-entry.scan-complete{border-left:3px solid var(--green)}
+.log-entry.alert{border-left:3px solid var(--red)}
+.log-entry.camera{border-left:3px solid var(--accent)}
+.log-entry.error{border-left:3px solid var(--red)}
+.empty-state{text-align:center;padding:80px 24px;color:var(--text2)}
+.empty-state .icon{font-size:48px;margin-bottom:16px;opacity:.5}
+.empty-state p{font-size:14px}
+.uptime{font-family:'JetBrains Mono',monospace;font-size:12px}
+</style>
+</head>
+<body>
+<div class="header">
+  <h1>📷 CamScan Dashboard</h1>
+  <div class="status" id="status"><span class="dot"></span><span id="statusText">Waiting for scan...</span> <span class="uptime" id="uptime"></span></div>
+</div>
+<div class="stats-bar">
+  <div class="stat-card total"><div class="value" id="sCameras">0</div><div class="label">Cameras</div></div>
+  <div class="stat-card alerts"><div class="value" id="sAlerts">0</div><div class="label">Alerts</div></div>
+  <div class="stat-card critical"><div class="value" id="sCrit">0</div><div class="label">Critical</div></div>
+  <div class="stat-card high"><div class="value" id="sHigh">0</div><div class="label">High</div></div>
+  <div class="stat-card medium"><div class="value" id="sMed">0</div><div class="label">Medium</div></div>
+  <div class="stat-card low"><div class="value" id="sLow">0</div><div class="label">Low</div></div>
+</div>
+<div class="controls">
+  <button id="btnAll" class="active" onclick="setFilter('all')">All</button>
+  <button id="btnAlert" onclick="setFilter('alert')">Alerts</button>
+  <button id="btnCamera" onclick="setFilter('camera')">Analysis</button>
+  <button id="btnScan" onclick="setFilter('scan')">Scans</button>
+  <button id="btnPause" onclick="togglePause()">⏸ Pause</button>
+  <button onclick="clearLogs()">🗑 Clear</button>
+  <div class="query" id="currentQuery"></div>
+</div>
+<div class="log-container" id="logs">
+  <div class="empty-state"><div class="icon">📡</div><p>Waiting for scan events...<br>Start a scan to see real-time results here.</p></div>
+</div>
+<script>
+const logs=document.getElementById('logs'),MAX=500;
+let entries=[],filter='all',paused=false,autoScroll=true,started=false;
+let scanActive=false;
+
+function setFilter(f){
+  filter=f;
+  document.querySelectorAll('.controls button[id^="btn"]').forEach(b=>b.classList.remove('active'));
+  const btnId='btn'+f.charAt(0).toUpperCase()+f.slice(1);
+  const btn=document.getElementById(btnId);
+  if(btn)btn.classList.add('active');
+  entries.forEach(e=>{e.el.style.display=(f==='all'||e.cat===f)?'':'none'});
+}
+
+function togglePause(){paused=!paused;document.getElementById('btnPause').textContent=paused?'▶ Resume':'⏸ Pause';
+document.getElementById('btnPause').classList.toggle('active',paused)}
+
+function clearLogs(){logs.innerHTML='';entries=[]}
+
+function fmtTime(ts){
+  if(!ts)return new Date().toLocaleTimeString('en-US',{hour12:false,hour:'2-digit',minute:'2-digit',second:'2-digit'});
+  const d=new Date(ts);
+  return d.toLocaleTimeString('en-US',{hour12:false,hour:'2-digit',minute:'2-digit',second:'2-digit'});
+}
+
+function fmtUptime(s){const h=Math.floor(s/3600),m=Math.floor((s%3600)/60),sec=Math.floor(s%60);
+return (h>0?h+'h ':'')+(m>0?m+'m ':'')+sec+'s'}
+
+function addEntry(html,cat){
+  if(!started){logs.innerHTML='';started=true}
+  if(paused)return;
+  const div=document.createElement('div');div.innerHTML=html;const el=div.firstChild;
+  el.style.display=(filter==='all'||filter===cat)?'':'none';
+  logs.appendChild(el);
+  const entry={el,cat};entries.push(entry);
+  while(entries.length>MAX){entries[0].el.remove();entries.shift()}
+  if(autoScroll)window.scrollTo({top:document.body.scrollHeight,behavior:'smooth'});
+}
+
+function badge(level){const l=(level||'info').toLowerCase();return `<span class="badge ${l}">${level}</span>`}
+
+function msg(d){return typeof d==='string'?d:(d&&d.message?d.message:JSON.stringify(d))}
+
+function detectRiskLevel(text){
+  const t=(text||'').toLowerCase();
+  if(t.includes('critical'))return 'Critical';
+  if(t.includes('high'))return 'High';
+  if(t.includes('medium'))return 'Medium';
+  if(t.includes('low'))return 'Low';
+  return null;
+}
+
+const es=new EventSource('/events');
+es.onmessage=function(e){
+  const ev=JSON.parse(e.data);const t=fmtTime(ev.timestamp);const d=ev.data;const m=msg(d);
+
+  switch(ev.type){
+  case 'stats':
+    if(typeof d==='object'&&d!==null){
+      document.getElementById('sCameras').textContent=d.total_cameras||0;
+      document.getElementById('sAlerts').textContent=d.total_alerts||0;
+      document.getElementById('sCrit').textContent=d.critical||0;
+      document.getElementById('sHigh').textContent=d.high||0;
+      document.getElementById('sMed').textContent=d.medium||0;
+      document.getElementById('sLow').textContent=d.low||0;
+      document.getElementById('uptime').textContent=fmtUptime(d.uptime_seconds||0);
+      const st=document.getElementById('status');
+      const stText=document.getElementById('statusText');
+      if(d.active_scan){st.className='status scanning';stText.textContent='Scanning...';}
+      else{st.className='status';stText.textContent='Idle';}
+      if(d.current_query)document.getElementById('currentQuery').textContent='Query: '+d.current_query;
+    }
+    break;
+  case 'scan_start':
+    scanActive=true;
+    document.getElementById('status').className='status scanning';
+    document.getElementById('statusText').textContent='Scanning...';
+    addEntry(`<div class="log-entry scan-start"><span class="time">${t}</span><span class="icon">🔍</span><div class="content"><div class="title">Scan Started</div><div class="detail">${m}</div></div>${badge('Info')}</div>`,'scan');
+    break;
+  case 'camera_found':
+    addEntry(`<div class="log-entry camera"><span class="time">${t}</span><span class="icon">📷</span><div class="content"><div class="title">Cameras Discovered</div><div class="detail">${m}</div></div>${badge('Info')}</div>`,'camera');
+    break;
+  case 'analysis':
+    const risk=detectRiskLevel(m);
+    const icons={'Critical':'🔴','High':'🟠','Medium':'🟡','Low':'🟢'};
+    const icon=risk?icons[risk]||'⚪':'🤖';
+    addEntry(`<div class="log-entry camera"><span class="time">${t}</span><span class="icon">${icon}</span><div class="content"><div class="title">AI Analysis</div><div class="detail">${m}</div></div>${risk?badge(risk):''}</div>`,'camera');
+    break;
+  case 'alert_sent':
+    addEntry(`<div class="log-entry alert"><span class="time">${t}</span><span class="icon">🚨</span><div class="content"><div class="title">Discord Alert</div><div class="detail">${m}</div></div>${badge('Critical')}</div>`,'alert');
+    break;
+  case 'scan_complete':
+    scanActive=false;
+    document.getElementById('status').className='status';
+    document.getElementById('statusText').textContent='Idle';
+    addEntry(`<div class="log-entry scan-complete"><span class="time">${t}</span><span class="icon">✅</span><div class="content"><div class="title">Scan Complete</div><div class="detail">${m}</div></div>${badge('Info')}</div>`,'scan');
+    break;
+  case 'log':
+    addEntry(`<div class="log-entry"><span class="time">${t}</span><span class="icon">📝</span><div class="content"><div class="detail">${m}</div></div></div>`,'scan');
+    break;
+  case 'error':
+    addEntry(`<div class="log-entry error"><span class="time">${t}</span><span class="icon">❌</span><div class="content"><div class="title">Error</div><div class="detail">${m}</div></div>${badge('Critical')}</div>`,'alert');
+    break;
+  }
+};
+es.onerror=function(){
+  document.getElementById('statusText').textContent='Disconnected — Reconnecting...';
+  document.getElementById('status').className='status';
+};
+</script>
+</body>
+</html>
