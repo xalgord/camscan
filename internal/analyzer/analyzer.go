@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"regexp"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -87,6 +88,29 @@ func (a *Analyzer) runWithQuery(ctx context.Context, queryStr string, limit int)
 		fmt.Printf("  └─ Scan Credits:   %d remaining\n", apiInfo.ScanCredits)
 	}
 
+	// Pre-sanitize: strip corporate-only filters before sending to Shodan
+	originalQuery := queryStr
+	queryStr = sanitizeQuery(queryStr)
+	if queryStr != originalQuery {
+		yellow.Printf("\n  ⚠  Removed restricted filters from query\n")
+		yellow.Printf("     Original: %s\n", originalQuery)
+		green.Printf("     Sanitized: %s\n", queryStr)
+		a.emitEvent(dashboard.EventLog, fmt.Sprintf("Auto-sanitized query: removed restricted filters. New query: %s", queryStr))
+
+		// If sanitization left the query empty or too generic, use AI to rebuild it
+		if strings.TrimSpace(queryStr) == "" && !a.noAI && a.minimaxClient != nil {
+			yellow.Printf("  🤖 Query was empty after sanitization — asking AI to generate a new one...\n")
+			a.emitEvent(dashboard.EventLog, fmt.Sprintf("Query empty after sanitization, asking AI to regenerate from: %s", originalQuery))
+			generated, genErr := a.minimaxClient.GenerateQuery(ctx, originalQuery, shodanPlan)
+			if genErr != nil {
+				return nil, 0, fmt.Errorf("AI query regeneration failed: %w", genErr)
+			}
+			queryStr = generated
+			green.Printf("  ✓ AI generated replacement query: %s\n", queryStr)
+			a.emitEvent(dashboard.EventLog, fmt.Sprintf("AI regenerated query: %s", queryStr))
+		}
+	}
+
 	cyan.Println("\n═══════════════════════════════════════════════════════════════")
 	cyan.Println("  PHASE 2: SHODAN RECONNAISSANCE")
 	cyan.Println("═══════════════════════════════════════════════════════════════")
@@ -118,9 +142,17 @@ func (a *Analyzer) runWithQuery(ctx context.Context, queryStr string, limit int)
 		}
 
 		// If this is the last attempt or AI is disabled, fail
-		if attempt >= maxQueryRetries || a.noAI || a.minimaxClient == nil {
-			a.emitEvent(dashboard.EventLog, fmt.Sprintf("Shodan search failed: %v", searchErr))
-			return nil, 0, fmt.Errorf("shodan search failed: %w", searchErr)
+		if attempt >= maxQueryRetries {
+			a.emitEvent(dashboard.EventLog, fmt.Sprintf("Shodan search failed after %d AI fix attempts: %v", attempt, searchErr))
+			return nil, 0, fmt.Errorf("shodan search failed after %d AI fix attempts: %w", attempt, searchErr)
+		}
+		if a.noAI || a.minimaxClient == nil {
+			reason := "--no-ai flag"
+			if a.minimaxClient == nil {
+				reason = "no Minimax API key configured"
+			}
+			a.emitEvent(dashboard.EventLog, fmt.Sprintf("Shodan search failed: %v (AI recovery unavailable: %s)", searchErr, reason))
+			return nil, 0, fmt.Errorf("shodan search failed: %w (AI recovery unavailable: %s)", searchErr, reason)
 		}
 
 		// AI error recovery: feed the error to the AI to fix the query
@@ -520,4 +552,18 @@ func (a *Analyzer) emitDetailEvent(index, total int, camera shodan.Camera, asses
 			Assessment: assessment,
 		},
 	})
+}
+
+// corporateFilterRe matches Shodan filters that require Corporate/Enterprise plans.
+// Covers: tag:"value", vuln:"value", ssl.cert.fingerprint:"value", has_screenshot:true/false
+var corporateFilterRe = regexp.MustCompile(`(?i)\b(?:tag|vuln|ssl\.cert\.fingerprint|has_screenshot)\s*:\s*(?:"[^"]*"|[^\s]+)`)
+
+// sanitizeQuery removes known Corporate-only Shodan filters from a query string.
+// This prevents 400 errors from the Shodan API for non-Corporate plan users.
+// It preserves all free-plan-compatible filters (title, product, country, city, etc.)
+func sanitizeQuery(query string) string {
+	cleaned := corporateFilterRe.ReplaceAllString(query, "")
+	// Collapse multiple spaces and trim
+	cleaned = strings.Join(strings.Fields(cleaned), " ")
+	return cleaned
 }
