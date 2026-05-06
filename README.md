@@ -55,7 +55,7 @@
 **One-liner** (requires Go 1.24+):
 
 ```bash
-go install github.com/xalgord/camscan@latest
+go install github.com/xalgord/camscan@v1.4.2
 ```
 
 **From source:**
