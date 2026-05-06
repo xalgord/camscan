@@ -122,12 +122,13 @@ func (a *Analyzer) runWithQuery(ctx context.Context, queryStr string, limit int)
 	a.emitEvent(dashboard.EventScanStart, fmt.Sprintf("Scan started — query: %s, limit: %d", queryStr, limit))
 
 	// Step 1: Discover cameras via Shodan (with AI error-recovery loop)
-	const maxQueryRetries = 2
+	// The AI keeps retrying until it finds a working query (safety cap at 10).
+	const maxQueryRetries = 10
 	var searchResult *shodan.SearchResult
 	var shodanDur time.Duration
 	currentQuery := queryStr
 
-	for attempt := 0; attempt <= maxQueryRetries; attempt++ {
+	for attempt := 0; ; attempt++ {
 		shodanStart := time.Now()
 		result, searchErr := a.shodanClient.SearchRaw(ctx, currentQuery, limit)
 		shodanDur = time.Since(shodanStart).Round(time.Millisecond)
@@ -141,7 +142,7 @@ func (a *Analyzer) runWithQuery(ctx context.Context, queryStr string, limit int)
 			break
 		}
 
-		// If this is the last attempt or AI is disabled, fail
+		// Safety cap — give up after maxQueryRetries to avoid infinite loops
 		if attempt >= maxQueryRetries {
 			a.emitEvent(dashboard.EventLog, fmt.Sprintf("Shodan search failed after %d AI fix attempts: %v", attempt, searchErr))
 			return nil, 0, fmt.Errorf("shodan search failed after %d AI fix attempts: %w", attempt, searchErr)
