@@ -66,11 +66,12 @@ func (q *SearchQuery) BuildQuery() string {
 	case "geovision":
 		parts = append(parts, `title:"GeoVision"`)
 	case "all":
-		// Broad CCTV search — combines multiple camera signatures (no Corporate-only filters)
-		parts = append(parts, `(title:"IP Camera" OR title:"DVR" OR title:"NVR" OR product:"Hikvision" OR product:"Dahua" OR title:"Network Camera" OR server:"webcamXP" OR title:"AXIS" OR title:"GeoVision" OR product:"AVTech" OR title:"Blue Iris" OR "RTSP/1.0 200 OK")`)
+		// Broad CCTV search — Shodan doesn't support OR, so use a generic title match
+		// that catches the widest range of camera web interfaces
+		parts = append(parts, `title:"camera"`)
 	default:
-		// Default: broad IP camera search
-		parts = append(parts, `(title:"IP Camera" OR title:"DVR" OR title:"NVR" OR product:"Hikvision" OR product:"Dahua" OR title:"Network Camera")`)
+		// Default: broad IP camera search using title filter
+		parts = append(parts, `title:"camera"`)
 	}
 
 	// Location filters
