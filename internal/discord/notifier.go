@@ -101,7 +101,7 @@ func (n *Notifier) SendAlert(alert CameraAlert) error {
 
 	credsStatus := "❌ No"
 	if alert.DefaultCreds {
-		credsStatus = "⚠️ Yes — Likely Default Credentials"
+		credsStatus = "⚠️ Yes — Confirmed Default Credentials"
 	}
 
 	product := alert.Product
@@ -110,7 +110,7 @@ func (n *Notifier) SendAlert(alert CameraAlert) error {
 	}
 
 	embed := Embed{
-		Title:       fmt.Sprintf("🚨 Open Camera Found: %s:%d", alert.IP, alert.Port),
+		Title:       fmt.Sprintf("🚨 Confirmed Camera Finding: %s:%d", alert.IP, alert.Port),
 		Description: alert.Summary,
 		Color:       color,
 		Fields: []Field{
@@ -207,17 +207,18 @@ func (n *Notifier) SendAlert(alert CameraAlert) error {
 
 // ScanSummary holds data for the scan-completion notification.
 type ScanSummary struct {
-	Query        string
-	TotalShodan  int
-	Scanned      int
-	Alerted      int
-	Critical     int
-	High         int
-	Medium       int
-	Low          int
-	Unknown      int
-	Errors       int
-	Duration     time.Duration
+	Query       string
+	TotalShodan int
+	Scanned     int
+	Findings    int
+	Alerted     int
+	Critical    int
+	High        int
+	Medium      int
+	Low         int
+	Unknown     int
+	Errors      int
+	Duration    time.Duration
 }
 
 // SendScanSummary sends a scan-completion embed to Discord.
@@ -244,6 +245,7 @@ func (n *Notifier) SendScanSummary(s ScanSummary) error {
 		{Name: "🔎 Query", Value: fmt.Sprintf("`%s`", s.Query), Inline: false},
 		{Name: "📊 Risk Breakdown", Value: riskBreakdown, Inline: false},
 		{Name: "📷 Cameras Scanned", Value: fmt.Sprintf("%d", s.Scanned), Inline: true},
+		{Name: "✅ Confirmed Findings", Value: fmt.Sprintf("%d", s.Findings), Inline: true},
 		{Name: "🌐 Total in Shodan", Value: fmt.Sprintf("%d", s.TotalShodan), Inline: true},
 		{Name: "🔔 Alerts Sent", Value: fmt.Sprintf("%d", s.Alerted), Inline: true},
 		{Name: "⏱️ Duration", Value: s.Duration.Truncate(time.Second).String(), Inline: true},

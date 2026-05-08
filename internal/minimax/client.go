@@ -68,8 +68,10 @@ Determine the authentication posture:
 - Is authentication required? (Check HTTP status: 200=open, 401/403=auth required)
 - What auth mechanism? (Basic, Digest, Form-based, Token, None)
 - Check for auth bypass indicators (200 on admin paths, no WWW-Authenticate header)
+- This assessment is passive. Do NOT claim default credentials are working unless
+  the provided banner data explicitly proves successful access with those credentials.
 
-For the IDENTIFIED PRODUCT, check these default credentials:
+For the IDENTIFIED PRODUCT, list only relevant default credential candidates:
 ┌─────────────────┬───────────────────────────────────────────────┐
 │ Vendor          │ Default Credentials                           │
 ├─────────────────┼───────────────────────────────────────────────┤
@@ -160,7 +162,7 @@ Risk level mapping:
 
 ⚠️ ANTI-INFLATION RULES (MANDATORY):
 - A blank page, error page, or page showing only a logo/redirect does NOT count as "open". Set is_open=false.
-- "Critical" requires CONFIRMED open access (HTTP 200 with actual stream/admin content) OR a confirmed exploitable CVE. Banner fingerprinting alone is NOT enough for Critical.
+- "Critical" requires CONFIRMED open access (HTTP 200 with actual stream/admin content), confirmed working default credentials, confirmed auth bypass, OR exploitable=true with evidence. Banner fingerprinting alone is NOT enough for Critical.
 - If the banner shows a login page (401, login form, redirect to /login), the max score is 50 (Medium) unless default creds are CONFIRMED working.
 - If you cannot determine the actual page content from the banner, do NOT assume it is accessible. State "Verification needed" and cap at Medium.
 - HTTP 200 with empty body or HTML with no functional content = NOT open access.
@@ -168,9 +170,10 @@ Risk level mapping:
 ⚠️ AUTHENTICATION = NOT VULNERABLE RULE (MANDATORY):
 - If the camera requires authentication and you CANNOT confirm bypass or default credentials working, it is NOT VULNERABLE.
 - A login page (HTTP 401, HTTP 403, login form) means the device is PROTECTED. Do NOT list it as vulnerable just because it exists on the internet.
-- Only mark as vulnerable if: (a) no auth required (confirmed open access), OR (b) auth bypass confirmed via known CVE with evidence, OR (c) default credentials confirmed working.
+- Only mark as vulnerable if: (a) no auth required (confirmed open access), OR (b) auth bypass confirmed via known CVE with evidence, OR (c) default credentials confirmed working, OR (d) exploitable=true with concrete evidence.
 - "Might be using default credentials" is NOT confirmation. You must cite specific evidence from the banner.
-- If auth is required and no bypass is found: risk_level=Low, risk_score ≤ 20, is_open=false, vulnerabilities=[] (empty).
+- If auth is required and no bypass/default-credential/exploitable path is confirmed: risk_level=Low, risk_score ≤ 20, is_open=false, default_creds=false, exploitable=false, vulnerabilities=[] (empty), exploit_paths=[] (empty).
+- Found CVEs that are not exploitable from the provided evidence are NOT vulnerabilities. You may mention patching in recommendations, but do not include them in vulnerabilities and do not raise the risk above Low.
 
 Describe concrete EXPLOIT PATHS — step-by-step attack chains:
 e.g., "1. Browse to http://IP:PORT 2. No login required 3. Access live stream at /live/ch0 4. Access admin panel at /setup.cgi 5. Change admin password to lock out owner"
@@ -212,6 +215,8 @@ Respond with ONLY a valid JSON object (no markdown, no code fences, no explanati
   "risk_score": 0-100,
   "is_open": true/false,
   "default_creds": true/false,
+  "exploitable": true/false,
+  "exploit_evidence": "Exact banner evidence proving exploitable access, or empty string",
   "vulnerabilities": [
     {
       "id": "VULN-001",
@@ -251,7 +256,7 @@ CRITICAL RULES:
 - Every vulnerability MUST have evidence from the actual banner data
 - If you cannot confirm a finding from the data, do NOT include it
 - Be specific: "Hikvision DS-2CD2xx running firmware V5.5.0" not "an IP camera"
-- Always test the EXACT default credentials for the identified vendor
+- Do not claim credentials were tested unless the banner proves they work; passive Shodan data usually cannot prove this
 - If a blank page is expected (e.g., RTSP-only device), say so in access_instructions and do NOT rate it Critical just because the port is open
 - access_instructions MUST always contain at least one entry explaining how to actually reach the device`
 

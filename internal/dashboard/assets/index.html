@@ -91,7 +91,7 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);heigh
   <div class="status" id="status"><span class="dot"></span><span id="statusText">Waiting for scan...</span> <span class="uptime" id="uptime"></span></div>
 </div>
 <div class="stats-bar">
-  <div class="stat-card total"><div class="value" id="sCameras">0</div><div class="label">Cameras</div></div>
+  <div class="stat-card total"><div class="value" id="sCameras">0</div><div class="label">Findings</div></div>
   <div class="stat-card alerts"><div class="value" id="sAlerts">0</div><div class="label">Alerts</div></div>
   <div class="stat-card critical"><div class="value" id="sCrit">0</div><div class="label">Critical</div></div>
   <div class="stat-card high"><div class="value" id="sHigh">0</div><div class="label">High</div></div>
@@ -136,6 +136,7 @@ function fmtUptime(s){const h=Math.floor(s/3600),m=Math.floor((s%3600)/60),sec=M
 function esc(s){const d=document.createElement('div');d.textContent=s;return d.innerHTML}
 function badge(level){const l=(level||'unknown').toLowerCase();return '<span class="badge '+l+'">'+level+'</span>'}
 function scoreColor(s){if(s>=80)return'var(--red)';if(s>=60)return'var(--orange)';if(s>=40)return'var(--yellow)';return'var(--green)'}
+function confirmedFinding(a){return !!(a&&(a.is_open||a.default_creds||a.exploitable||(a.auth_analysis&&a.auth_analysis.bypass_possible)))}
 
 function addLog(icon,msg,cls){
   if(!started){logsEl.innerHTML='';started=true}
@@ -151,7 +152,7 @@ function addLog(icon,msg,cls){
 
 function addFinding(key,data){
   const a=data.assessment,c=data.camera;
-  if(!a)return;
+  if(!confirmedFinding(a))return;
   const existing=document.getElementById('f-'+CSS.escape(key));
   if(existing)existing.remove();
 
@@ -170,6 +171,7 @@ function addFinding(key,data){
     '<div class="f-meta"><span>Score: <b>'+a.risk_score+'/100</b></span>'+
     (vulnCount?'<span>🛡 '+vulnCount+' vulns</span>':'')+
     (cveCount?'<span>📋 '+cveCount+' CVEs</span>':'')+
+    (a.exploitable?'<span>⚔ Exploitable</span>':'')+
     '<span>'+(a.is_open?'🔓 Open':'🔒 Auth')+'</span></div>';
 
   const parent=document.getElementById('findings');
@@ -229,6 +231,7 @@ function renderPanel(key){
   if(c.city||c.country)h+='<dt>Location</dt><dd>'+esc((c.city||'')+', '+(c.country||''))+'</dd>';
   h+='<dt>Open</dt><dd>'+(a.is_open?'✅ Yes':'❌ No')+'</dd>';
   h+='<dt>Default Creds</dt><dd>'+(a.default_creds?'⚠️ Yes':'🔒 No')+'</dd>';
+  h+='<dt>Exploitable</dt><dd>'+(a.exploitable?'⚔️ Yes':'No')+'</dd>';
   h+='</dl></div>';
 
   if(a.auth_analysis){

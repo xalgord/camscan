@@ -120,6 +120,8 @@ func (a *Analyzer) runWithQuery(ctx context.Context, queryStr string, limit int)
 
 	// Dashboard: emit scan start
 	a.emitEvent(dashboard.EventScanStart, fmt.Sprintf("Scan started — query: %s, limit: %d", queryStr, limit))
+	a.markScanStarted(queryStr)
+	defer a.markScanFinished()
 
 	// Step 1: Discover cameras via Shodan (with AI error-recovery loop)
 	// The AI keeps retrying until it finds a working query (safety cap at 10).
@@ -258,7 +260,9 @@ func (a *Analyzer) runWithQuery(ctx context.Context, queryStr string, limit int)
 				fmt.Printf("  [%d/%d] %s:%d (%s)\n", idx+1, len(cameras), camera.IP, camera.Port, product)
 				color.Red("         ❌ AI analysis failed (%s): %s\n", aiDur, analyzeErr.Error())
 				a.emitEvent(dashboard.EventAnalysis, fmt.Sprintf("[%d/%d] %s:%d — ❌ AI analysis failed: %s", idx+1, len(cameras), camera.IP, camera.Port, analyzeErr.Error()))
+				a.incrementErrorStats()
 			} else {
+				decision := enforceReportableAssessment(camera, assessment)
 				results[idx] = Result{
 					Camera:     camera,
 					Assessment: assessment,
@@ -269,6 +273,17 @@ func (a *Analyzer) runWithQuery(ctx context.Context, queryStr string, limit int)
 
 				// Main status line
 				fmt.Printf("  [%d/%d] %s:%d (%s)\n", idx+1, len(cameras), camera.IP, camera.Port, product)
+
+				if !decision.Reportable {
+					fmt.Printf("         ⚪ Not vulnerable  Score: %d/100  Open: %v  DefCreds: %v  Exploitable: %v\n",
+						assessment.RiskScore, assessment.IsOpen, assessment.DefaultCreds, assessment.Exploitable)
+					dim.Printf("         Reason: %s\n", decision.Reason)
+					dim.Printf("         ⏱ %s\n\n", aiDur)
+					a.emitEvent(dashboard.EventAnalysis, fmt.Sprintf("[%d/%d] %s:%d — Not vulnerable: %s",
+						idx+1, len(cameras), camera.IP, camera.Port, decision.Reason))
+					return
+				}
+
 				fmt.Printf("         %s %s  Score: %d/100  Open: %v  DefCreds: %v\n",
 					icon, assessment.RiskLevel, assessment.RiskScore, assessment.IsOpen, assessment.DefaultCreds)
 
@@ -295,11 +310,13 @@ func (a *Analyzer) runWithQuery(ctx context.Context, queryStr string, limit int)
 
 				// Emit full structured analysis for the interactive dashboard
 				a.emitDetailEvent(idx+1, len(cameras), camera, assessment)
+				a.incrementFindingStats(assessment)
 
 				// REAL-TIME Discord alert — send immediately after each camera analysis
 				if a.notifier != nil {
 					if sent := a.sendSingleAlert(camera, assessment); sent {
 						atomic.AddInt32(&alertedCount, 1)
+						a.incrementAlertStats()
 					}
 				}
 			}
@@ -309,13 +326,15 @@ func (a *Analyzer) runWithQuery(ctx context.Context, queryStr string, limit int)
 	wg.Wait()
 	fmt.Println()
 
+	reportedResults := reportableResults(results)
+
 	// Send scan summary after all analysis is done
 	alerted := int(atomic.LoadInt32(&alertedCount))
 	if a.notifier != nil {
 		cyan.Println("═══════════════════════════════════════════════════════════════")
 		cyan.Println("  PHASE 4: DISCORD SUMMARY")
 		cyan.Println("═══════════════════════════════════════════════════════════════")
-		a.sendScanSummary(results, queryStr, total, alerted, scanStart)
+		a.sendScanSummary(results, reportedResults, queryStr, total, alerted, scanStart)
 		green.Printf("  ✓ Sent %d real-time alerts + scan summary\n", alerted)
 		a.emitEvent(dashboard.EventAlertSent, fmt.Sprintf("Dispatched %d real-time Discord alerts", alerted))
 	}
@@ -331,8 +350,9 @@ func (a *Analyzer) runWithQuery(ctx context.Context, queryStr string, limit int)
 	for _, r := range results {
 		if r.Error != "" {
 			errN++
-			continue
 		}
+	}
+	for _, r := range reportedResults {
 		if r.Assessment != nil {
 			switch strings.ToLower(r.Assessment.RiskLevel) {
 			case "critical":
@@ -349,6 +369,7 @@ func (a *Analyzer) runWithQuery(ctx context.Context, queryStr string, limit int)
 
 	fmt.Printf("  ├─ Duration:    %s\n", scanDuration)
 	fmt.Printf("  ├─ Analyzed:    %d cameras\n", len(results))
+	fmt.Printf("  ├─ Reported:    %d accessible/exploitable cameras\n", len(reportedResults))
 	if critN > 0 {
 		color.Red("  ├─ Critical:    %d\n", critN)
 	}
@@ -366,10 +387,11 @@ func (a *Analyzer) runWithQuery(ctx context.Context, queryStr string, limit int)
 	}
 	fmt.Printf("  └─ Dashboard:   http://localhost:9847\n")
 
-	a.emitEvent(dashboard.EventScanComplete, fmt.Sprintf("Scan finished — %d cameras analyzed in %s (crit=%d high=%d med=%d low=%d err=%d)",
-		len(results), scanDuration, critN, highN, medN, lowN, errN))
+	a.markScanFinished()
+	a.emitEvent(dashboard.EventScanComplete, fmt.Sprintf("Scan finished — %d cameras analyzed, %d reported in %s (crit=%d high=%d med=%d low=%d err=%d)",
+		len(results), len(reportedResults), scanDuration, critN, highN, medN, lowN, errN))
 
-	return results, total, nil
+	return reportedResults, total, nil
 }
 
 // sendSingleAlert sends a real-time Discord alert for a single camera result.
@@ -380,10 +402,15 @@ func (a *Analyzer) sendSingleAlert(camera shodan.Camera, assessment *minimax.Sec
 	if assessment == nil {
 		return false
 	}
+	if !isReportableAssessment(camera, assessment) {
+		return false
+	}
 
 	level := strings.ToLower(assessment.RiskLevel)
 	shouldAlert := assessment.IsOpen ||
 		assessment.DefaultCreds ||
+		assessment.Exploitable ||
+		assessment.AuthAnalysis.BypassPossible ||
 		level == "critical" ||
 		level == "high"
 
@@ -427,13 +454,14 @@ func (a *Analyzer) sendSingleAlert(camera shodan.Camera, assessment *minimax.Sec
 
 // sendScanSummary counts risk levels from results and sends a completion
 // notification to Discord.
-func (a *Analyzer) sendScanSummary(results []Result, query string, totalShodan, alerted int, scanStart time.Time) {
+func (a *Analyzer) sendScanSummary(results, reportedResults []Result, query string, totalShodan, alerted int, scanStart time.Time) {
 	var crit, high, med, low, unknown, errors int
 	for _, r := range results {
 		if r.Error != "" {
 			errors++
-			continue
 		}
+	}
+	for _, r := range reportedResults {
 		if r.Assessment == nil {
 			continue
 		}
@@ -455,6 +483,7 @@ func (a *Analyzer) sendScanSummary(results []Result, query string, totalShodan, 
 		Query:       query,
 		TotalShodan: totalShodan,
 		Scanned:     len(results),
+		Findings:    len(reportedResults),
 		Alerted:     alerted,
 		Critical:    crit,
 		High:        high,
@@ -531,11 +560,75 @@ func (a *Analyzer) emitEvent(eventType dashboard.EventType, message string) {
 	})
 }
 
+func (a *Analyzer) markScanStarted(query string) {
+	if a.hub == nil {
+		return
+	}
+	a.hub.UpdateStats(func(s *dashboard.Stats) {
+		s.TotalScans++
+		s.TotalCameras = 0
+		s.TotalAlerts = 0
+		s.Critical = 0
+		s.High = 0
+		s.Medium = 0
+		s.Low = 0
+		s.Errors = 0
+		s.ActiveScan = true
+		s.CurrentQuery = query
+	})
+}
+
+func (a *Analyzer) incrementFindingStats(assessment *minimax.SecurityAssessment) {
+	if a.hub == nil || assessment == nil {
+		return
+	}
+	a.hub.UpdateStats(func(s *dashboard.Stats) {
+		s.TotalCameras++
+		switch strings.ToLower(assessment.RiskLevel) {
+		case "critical":
+			s.Critical++
+		case "high":
+			s.High++
+		case "medium":
+			s.Medium++
+		case "low":
+			s.Low++
+		}
+	})
+}
+
+func (a *Analyzer) incrementAlertStats() {
+	if a.hub == nil {
+		return
+	}
+	a.hub.UpdateStats(func(s *dashboard.Stats) {
+		s.TotalAlerts++
+	})
+}
+
+func (a *Analyzer) incrementErrorStats() {
+	if a.hub == nil {
+		return
+	}
+	a.hub.UpdateStats(func(s *dashboard.Stats) {
+		s.Errors++
+	})
+}
+
+func (a *Analyzer) markScanFinished() {
+	if a.hub == nil {
+		return
+	}
+	a.hub.UpdateStats(func(s *dashboard.Stats) {
+		s.ActiveScan = false
+	})
+}
+
 // AnalysisPayload is the structured payload for analysis_detail events.
 type AnalysisPayload struct {
-	Index      int                        `json:"index"`
-	Total      int                        `json:"total"`
-	Camera     shodan.Camera              `json:"camera"`
+	Index      int                         `json:"index"`
+	Total      int                         `json:"total"`
+	Camera     shodan.Camera               `json:"camera"`
 	Assessment *minimax.SecurityAssessment `json:"assessment"`
 }
 
@@ -553,6 +646,230 @@ func (a *Analyzer) emitDetailEvent(index, total int, camera shodan.Camera, asses
 			Assessment: assessment,
 		},
 	})
+}
+
+type assessmentDecision struct {
+	Reportable bool
+	Reason     string
+}
+
+func reportableResults(results []Result) []Result {
+	filtered := make([]Result, 0, len(results))
+	for _, r := range results {
+		if r.Assessment == nil || r.Error != "" {
+			continue
+		}
+		if isReportableAssessment(r.Camera, r.Assessment) {
+			filtered = append(filtered, r)
+		}
+	}
+	return filtered
+}
+
+func enforceReportableAssessment(camera shodan.Camera, assessment *minimax.SecurityAssessment) assessmentDecision {
+	decision := assessReportability(camera, assessment)
+	if assessment == nil {
+		return decision
+	}
+	assessment.RiskScore = clampScore(assessment.RiskScore)
+
+	if decision.Reportable {
+		if strings.TrimSpace(assessment.RiskLevel) == "" || strings.EqualFold(assessment.RiskLevel, "unknown") {
+			assessment.RiskLevel = riskLevelForScore(assessment.RiskScore)
+		}
+		return decision
+	}
+
+	if assessment.RiskScore > 20 {
+		assessment.RiskScore = 20
+	}
+	assessment.RiskLevel = "Low"
+	assessment.IsOpen = false
+	assessment.DefaultCreds = false
+	assessment.Exploitable = false
+	assessment.ExploitEvidence = ""
+	assessment.Vulnerabilities = nil
+	assessment.ExploitPaths = nil
+	assessment.CveReferences = nil
+	assessment.AuthAnalysis.BypassPossible = false
+	assessment.AuthAnalysis.BypassMethod = ""
+	assessment.Summary = "Not vulnerable: " + decision.Reason
+	return decision
+}
+
+func isReportableAssessment(camera shodan.Camera, assessment *minimax.SecurityAssessment) bool {
+	return assessReportability(camera, assessment).Reportable
+}
+
+func assessReportability(camera shodan.Camera, assessment *minimax.SecurityAssessment) assessmentDecision {
+	if assessment == nil {
+		return assessmentDecision{Reason: "no assessment available"}
+	}
+
+	authRequired := requiresAuthentication(camera, assessment)
+	confirmedDefaultCreds := assessment.DefaultCreds && !hasUnconfirmedDefaultCredsLanguage(assessment)
+	confirmedBypass := assessment.AuthAnalysis.BypassPossible && hasBypassEvidence(assessment)
+	confirmedExploitable := assessment.Exploitable && hasExploitEvidence(assessment)
+	confirmedOpen := assessment.IsOpen && !authRequired
+
+	if authRequired && !confirmedDefaultCreds && !confirmedBypass && !confirmedExploitable {
+		return assessmentDecision{
+			Reason: "authentication required and no confirmed bypass, working default credentials, or exploitable issue",
+		}
+	}
+	if confirmedOpen {
+		return assessmentDecision{Reportable: true, Reason: "confirmed open access"}
+	}
+	if confirmedDefaultCreds {
+		return assessmentDecision{Reportable: true, Reason: "confirmed working default credentials"}
+	}
+	if confirmedBypass {
+		return assessmentDecision{Reportable: true, Reason: "confirmed authentication bypass"}
+	}
+	if confirmedExploitable {
+		return assessmentDecision{Reportable: true, Reason: "confirmed exploitable issue"}
+	}
+
+	return assessmentDecision{
+		Reason: "no confirmed open access, working credentials, auth bypass, or exploitable path",
+	}
+}
+
+func requiresAuthentication(camera shodan.Camera, assessment *minimax.SecurityAssessment) bool {
+	if assessment.AuthAnalysis.AuthRequired {
+		return true
+	}
+
+	switch strings.ToLower(strings.TrimSpace(assessment.AuthAnalysis.AuthType)) {
+	case "basic", "digest", "form", "token":
+		return true
+	}
+
+	if camera.HTTP != nil && (camera.HTTP.Status == 401 || camera.HTTP.Status == 403) {
+		return true
+	}
+
+	return containsAny(strings.ToLower(strings.Join([]string{
+		camera.Title,
+		camera.Banner,
+		httpTitle(camera),
+		httpServer(camera),
+		assessment.Summary,
+	}, " ")), []string{
+		"401 unauthorized",
+		"403 forbidden",
+		"www-authenticate",
+		"basic realm",
+		"digest realm",
+		"/login",
+		"login page",
+		"login form",
+		"sign in",
+		"auth required",
+		"authentication required",
+		"requires authentication",
+		`type="password"`,
+		`type='password'`,
+		"password required",
+		"enter password",
+	})
+}
+
+func hasUnconfirmedDefaultCredsLanguage(assessment *minimax.SecurityAssessment) bool {
+	return containsAny(assessmentEvidenceText(assessment), []string{
+		"likely default",
+		"likely using default",
+		"suspected default",
+		"possible default",
+		"potential default",
+		"default credentials likely",
+		"not confirmed",
+		"unconfirmed",
+		"cannot confirm",
+		"verification needed",
+	})
+}
+
+func hasBypassEvidence(assessment *minimax.SecurityAssessment) bool {
+	if strings.TrimSpace(assessment.AuthAnalysis.BypassMethod) != "" {
+		return true
+	}
+	return strings.TrimSpace(assessment.ExploitEvidence) != ""
+}
+
+func hasExploitEvidence(assessment *minimax.SecurityAssessment) bool {
+	if strings.TrimSpace(assessment.ExploitEvidence) != "" {
+		return true
+	}
+	if len(assessment.ExploitPaths) > 0 {
+		return true
+	}
+	for _, vuln := range assessment.Vulnerabilities {
+		if strings.TrimSpace(vuln.Evidence) != "" {
+			return true
+		}
+	}
+	return false
+}
+
+func assessmentEvidenceText(assessment *minimax.SecurityAssessment) string {
+	if assessment == nil {
+		return ""
+	}
+	var parts []string
+	parts = append(parts, assessment.Summary, assessment.ExploitEvidence, assessment.AuthAnalysis.BypassMethod)
+	parts = append(parts, assessment.ExploitPaths...)
+	parts = append(parts, assessment.AccessInstructions...)
+	for _, vuln := range assessment.Vulnerabilities {
+		parts = append(parts, vuln.Title, vuln.Detail, vuln.Evidence)
+	}
+	return strings.ToLower(strings.Join(parts, " "))
+}
+
+func httpTitle(camera shodan.Camera) string {
+	if camera.HTTP == nil {
+		return ""
+	}
+	return camera.HTTP.Title
+}
+
+func httpServer(camera shodan.Camera) string {
+	if camera.HTTP == nil {
+		return ""
+	}
+	return camera.HTTP.Server
+}
+
+func containsAny(s string, needles []string) bool {
+	for _, needle := range needles {
+		if strings.Contains(s, needle) {
+			return true
+		}
+	}
+	return false
+}
+
+func clampScore(score int) int {
+	if score < 0 {
+		return 0
+	}
+	if score > 100 {
+		return 100
+	}
+	return score
+}
+
+func riskLevelForScore(score int) string {
+	switch {
+	case score >= 76:
+		return "Critical"
+	case score >= 51:
+		return "High"
+	case score >= 21:
+		return "Medium"
+	default:
+		return "Low"
+	}
 }
 
 // corporateFilterRe matches Shodan filters that require Corporate/Enterprise plans.

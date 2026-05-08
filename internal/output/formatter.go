@@ -34,22 +34,23 @@ func Render(results []analyzer.Result, total int, format Format, verbose bool) {
 
 func renderJSON(results []analyzer.Result) {
 	type jsonResult struct {
-		IP         string   `json:"ip"`
-		Port       int      `json:"port"`
-		Product    string   `json:"product"`
-		Org        string   `json:"org"`
-		City       string   `json:"city"`
-		Country    string   `json:"country"`
-		Transport  string   `json:"transport"`
-		Hostnames  []string `json:"hostnames,omitempty"`
-		RiskLevel  string   `json:"risk_level,omitempty"`
-		IsOpen     bool     `json:"is_open,omitempty"`
-		DefaultCreds bool   `json:"default_creds,omitempty"`
-		Vulns      []string `json:"vulnerabilities,omitempty"`
+		IP              string   `json:"ip"`
+		Port            int      `json:"port"`
+		Product         string   `json:"product"`
+		Org             string   `json:"org"`
+		City            string   `json:"city"`
+		Country         string   `json:"country"`
+		Transport       string   `json:"transport"`
+		Hostnames       []string `json:"hostnames,omitempty"`
+		RiskLevel       string   `json:"risk_level,omitempty"`
+		IsOpen          bool     `json:"is_open,omitempty"`
+		DefaultCreds    bool     `json:"default_creds,omitempty"`
+		Exploitable     bool     `json:"exploitable,omitempty"`
+		Vulns           []string `json:"vulnerabilities,omitempty"`
 		Recommendations []string `json:"recommendations,omitempty"`
-		Summary    string   `json:"summary,omitempty"`
-		Error      string   `json:"error,omitempty"`
-		Banner     string   `json:"banner,omitempty"`
+		Summary         string   `json:"summary,omitempty"`
+		Error           string   `json:"error,omitempty"`
+		Banner          string   `json:"banner,omitempty"`
 	}
 
 	out := make([]jsonResult, len(results))
@@ -69,6 +70,7 @@ func renderJSON(results []analyzer.Result) {
 			jr.RiskLevel = r.Assessment.RiskLevel
 			jr.IsOpen = r.Assessment.IsOpen
 			jr.DefaultCreds = r.Assessment.DefaultCreds
+			jr.Exploitable = r.Assessment.Exploitable
 			jr.Vulns = r.Assessment.VulnTitles()
 			jr.Recommendations = r.Assessment.Recommendations
 			jr.Summary = r.Assessment.Summary
@@ -190,6 +192,7 @@ func renderTable(results []analyzer.Result, total int, verbose bool) {
 				fmt.Printf("    Score:     %d/100\n", r.Assessment.RiskScore)
 				fmt.Printf("    Open:      %v\n", r.Assessment.IsOpen)
 				fmt.Printf("    DefCreds:  %v\n", r.Assessment.DefaultCreds)
+				fmt.Printf("    Exploit:   %v\n", r.Assessment.Exploitable)
 
 				if len(r.Assessment.Vulnerabilities) > 0 {
 					fmt.Printf("    Vulns:     (%d found)\n", len(r.Assessment.Vulnerabilities))

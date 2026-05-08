@@ -19,7 +19,7 @@ echo "🔧 Installing CamScan service (user: $CAMSCAN_USER)..."
 if [ ! -f "$BINARY_SRC" ]; then
     echo "  Building binary..."
     cd "$(dirname "$0")/.."
-    go build -ldflags "-X github.com/xalgord/camscan/cmd.Version=$(git describe --tags --always 2>/dev/null || echo dev)" -o camscan .
+    go build -ldflags "-X github.com/xalgord/camscan/cmd.version=$(git describe --tags --always 2>/dev/null || echo dev)" -o camscan .
     cd - >/dev/null
 fi
 

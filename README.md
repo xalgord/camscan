@@ -29,8 +29,8 @@
 |---|---|
 | 🔍 **Shodan Discovery** | Find CCTV & IP cameras by country, state, or city |
 | 🤖 **AI Security Analysis** | Minimax M2.7 evaluates each camera's security posture passively |
-| 📊 **Real-Time Dashboard** | Live web dashboard at `:9847` with split findings/logs panels, drill-down details, and raw AI response viewer |
-| 🔐 **Auth-Bypass Validation** | Cameras behind authentication are NOT marked vulnerable unless a confirmed bypass exists |
+| 📊 **Real-Time Dashboard** | Live web dashboard at `:9847` with confirmed findings/logs panels, drill-down details, and raw AI response viewer |
+| 🔐 **Strict Vulnerability Gate** | Cameras behind authentication are NOT reported unless open access, working default credentials, auth bypass, or exploitability is confirmed |
 | 🔔 **Discord Alerts** | Real-time webhook notifications for High/Critical risk cameras with default credentials |
 | 🔄 **Daemon Mode** | Run as a systemd service — dashboard-only (default) or with periodic scan intervals |
 | 🛡️ **Deduplication** | In-memory 24h TTL cache prevents duplicate alerts across scan cycles |
@@ -55,7 +55,7 @@
 **One-liner** (requires Go 1.24+):
 
 ```bash
-go install github.com/xalgord/camscan@v1.4.2
+go install github.com/xalgord/camscan@v1.6.2
 ```
 
 **From source:**
@@ -63,7 +63,7 @@ go install github.com/xalgord/camscan@v1.4.2
 ```bash
 git clone https://github.com/xalgord/camscan.git
 cd camscan
-go build -ldflags "-X github.com/xalgord/camscan/cmd.Version=1.0.0" -o camscan .
+go build -ldflags "-X github.com/xalgord/camscan/cmd.version=v1.6.2" -o camscan .
 ```
 
 ### Configure
@@ -158,10 +158,10 @@ The web dashboard (`http://localhost:9847`) provides:
 
 | Panel | Description |
 |---|---|
-| **Findings** (left) | Security findings sorted by risk score — click any finding for drill-down |
+| **Findings** (left) | Confirmed accessible/exploitable camera findings sorted by risk score — click any finding for drill-down |
 | **Event Logs** (right) | Live scan telemetry, analysis events, and error messages |
 | **Detail Panel** | Tabbed view with **Analysis** (vulns, CVEs, auth, exploit paths) and **Raw Response** (unprocessed AI output) |
-| **Stats Bar** | Live camera count, alert totals, severity breakdown, uptime |
+| **Stats Bar** | Live finding count, alert totals, severity breakdown, uptime |
 
 ---
 
@@ -225,11 +225,9 @@ The web dashboard (`http://localhost:9847`) provides:
 ├────┼─────────────────┼──────┼──────────────┼───────────┼──────────────────────────────┤
 │ 1  │ 103.xx.xx.xx    │ 80   │ Hikvision    │ 🔴 CRIT  │ No auth, default admin panel  │
 │ 2  │ 49.xx.xx.xx     │ 554  │ RTSP Stream  │ 🟠 HIGH  │ Open RTSP, no credentials    │
-│ 3  │ 122.xx.xx.xx    │ 8080 │ Dahua        │ 🟡 MED   │ Outdated firmware detected   │
-│ 4  │ 14.xx.xx.xx     │ 443  │ Axis Camera  │ 🟢 LOW   │ TLS enabled, auth required   │
 └────┴─────────────────┴──────┴──────────────┴───────────┴──────────────────────────────┘
 
-📊 Summary: 1 Critical | 1 High | 1 Medium | 1 Low | Total in Shodan: 142
+📊 Summary: 1 Critical | 1 High | Total in Shodan: 142
 ```
 
 ---
