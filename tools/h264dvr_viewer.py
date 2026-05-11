@@ -365,7 +365,7 @@ def stream_loop():
         # ── Persistent ffmpeg decoder ────────────────────────────────
         ffproc = subprocess.Popen(
             [
-                "ffmpeg", "-loglevel", "error",
+                "ffmpeg", "-loglevel", "fatal",
                 "-f", "h264", "-i", "pipe:0",
                 "-f", "mjpeg", "-q:v", str(args.quality),
                 "-r", str(args.fps),
@@ -395,6 +395,7 @@ def stream_loop():
 
         # ── Receive loop ─────────────────────────────────────────────
         frag_buf = []
+        sock.settimeout(2)  # Unblock recv() for clean shutdown
         try:
             while running:
                 try:
@@ -500,7 +501,8 @@ examples:
     worker = threading.Thread(target=stream_loop, daemon=True)
     worker.start()
 
-    # Start HTTP server
+    # Start HTTP server (SO_REUSEADDR prevents "Address already in use" on restart)
+    HTTPServer.allow_reuse_address = True
     server = HTTPServer(("0.0.0.0", args.http), ViewerHandler)
     log(f"HTTP server on http://localhost:{args.http}")
     log("Ctrl+C to stop\n")
@@ -515,6 +517,12 @@ examples:
         print("\n", flush=True)
         log("Shutting down...")
         threading.Thread(target=server.shutdown, daemon=True).start()
+        # Force exit after grace period — blocked sockets won't release cleanly
+        def force_exit():
+            time.sleep(1.5)
+            log("Force exit.")
+            os._exit(0)
+        threading.Thread(target=force_exit, daemon=True).start()
 
     signal.signal(signal.SIGINT, shutdown)
     signal.signal(signal.SIGTERM, shutdown)
