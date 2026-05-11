@@ -282,6 +282,9 @@ func (a *Analyzer) runWithQuery(ctx context.Context, queryStr string, limit int)
 			} else {
 				if validation, ok := a.validateHTTP(ctx, camera, assessment); ok {
 					a.emitValidation(camera, validation)
+				} else if validator.SupportsRTSP(camera) || validator.IsRTSPBanner(camera) {
+					// RTSP port — probe for unauthenticated streams
+					a.validateRTSP(ctx, camera, assessment)
 				}
 				decision := enforceReportableAssessment(camera, assessment)
 				results[idx] = Result{
@@ -585,6 +588,111 @@ func buildCameraPrompt(cam shodan.Camera) string {
 	sb.WriteString(fmt.Sprintf("\n=== RAW BANNER ===\n%s\n", banner))
 
 	return sb.String()
+}
+
+func (a *Analyzer) validateRTSP(ctx context.Context, camera shodan.Camera, assessment *minimax.SecurityAssessment) {
+	if assessment == nil {
+		return
+	}
+
+	timeout := 5 * time.Second
+	if a.httpValidator != nil {
+		timeout = a.httpValidator.Timeout()
+	}
+
+	log.Printf("         📡 Probing RTSP on %s:%d...", camera.IP, camera.Port)
+	probeResults := validator.ProbeRTSP(ctx, camera, timeout)
+
+	var openStreams []validator.RTSPProbeResult
+	var authRequired bool
+
+	for _, pr := range probeResults {
+		if pr.Accessible {
+			openStreams = append(openStreams, pr)
+			if pr.DefaultCreds {
+				log.Printf("         🔑 RTSP DEFAULT CREDS: %s (server: %s)", pr.URL, pr.Server)
+			} else {
+				log.Printf("         📹 RTSP OPEN: %s (server: %s)", pr.URL, pr.Server)
+			}
+		} else if pr.StatusCode == 401 || pr.HasWWWAuth {
+			authRequired = true
+		}
+	}
+
+	if len(openStreams) > 0 {
+		stream := openStreams[0]
+		isDefaultCreds := stream.DefaultCreds
+
+		// Create synthetic ActiveValidation for the RTSP finding
+		assessment.ActiveValidation = &minimax.ActiveValidation{
+			Method:         "rtsp-probe",
+			TargetURL:      stream.URL,
+			Attempted:      true,
+			Reachable:      true,
+			OpenContent:    !isDefaultCreds, // only truly open if no creds needed
+			AuthRequired:   isDefaultCreds,
+			LoginDetected:  isDefaultCreds,
+			LoginAttempted: isDefaultCreds,
+			LoginSucceeded: isDefaultCreds,
+		}
+
+		for _, s := range openStreams {
+			if s.DefaultCreds {
+				assessment.ActiveValidation.Evidence = append(assessment.ActiveValidation.Evidence,
+					fmt.Sprintf("RTSP stream accessible with default credentials: %s (server: %s)", s.URL, s.Server))
+			} else {
+				assessment.ActiveValidation.Evidence = append(assessment.ActiveValidation.Evidence,
+					fmt.Sprintf("Unauthenticated RTSP stream: %s (server: %s)", s.URL, s.Server))
+			}
+		}
+
+		assessment.IsOpen = true
+		assessment.Exploitable = true
+
+		if isDefaultCreds {
+			assessment.ExploitEvidence = fmt.Sprintf("RTSP stream accessible with default credentials on %d path(s)", len(openStreams))
+			assessment.AuthAnalysis.AuthRequired = true
+			assessment.AuthAnalysis.AuthType = "digest"
+			assessment.DefaultCreds = true
+			assessment.Summary = fmt.Sprintf("Camera RTSP stream accessible with default credentials — live video exposed (server: %s)", stream.Server)
+
+			// Build VLC-compatible URL with embedded creds
+			vlcURL := fmt.Sprintf("rtsp://admin:@%s:%d%s", camera.IP, camera.Port, stream.Path)
+			appendUniqueString(&assessment.AccessInstructions,
+				fmt.Sprintf("VLC/ffplay: Open %s for live stream (default creds: admin/empty)", vlcURL))
+			appendUniqueString(&assessment.ExploitPaths,
+				fmt.Sprintf("1. Open VLC → Media → Open Network Stream → %s", vlcURL))
+			appendUniqueString(&assessment.ExploitPaths,
+				"2. Default credentials: admin / (empty password)")
+		} else {
+			assessment.ExploitEvidence = fmt.Sprintf("Unauthenticated RTSP stream access confirmed on %d path(s)", len(openStreams))
+			assessment.AuthAnalysis.AuthRequired = false
+			assessment.AuthAnalysis.AuthType = "none"
+			assessment.Summary = fmt.Sprintf("Camera exposes %d unauthenticated RTSP stream(s) — live video accessible without credentials", len(openStreams))
+			appendUniqueString(&assessment.AccessInstructions,
+				fmt.Sprintf("VLC/ffplay: Open %s for live stream", stream.URL))
+			appendUniqueString(&assessment.ExploitPaths,
+				fmt.Sprintf("1. Open VLC → Media → Open Network Stream → %s", stream.URL))
+			appendUniqueString(&assessment.ExploitPaths,
+				"2. No authentication required — direct video access")
+		}
+
+		if assessment.RiskScore < 85 {
+			assessment.RiskScore = 85
+			assessment.RiskLevel = "Critical"
+		}
+	} else if authRequired {
+		log.Printf("         🔒 RTSP requires authentication on %s:%d", camera.IP, camera.Port)
+		assessment.ActiveValidation = &minimax.ActiveValidation{
+			Method:       "rtsp-probe",
+			TargetURL:    fmt.Sprintf("rtsp://%s:%d/", camera.IP, camera.Port),
+			Attempted:    true,
+			Reachable:    true,
+			AuthRequired: true,
+		}
+	} else {
+		log.Printf("         ⚠ RTSP probe inconclusive on %s:%d", camera.IP, camera.Port)
+	}
 }
 
 func (a *Analyzer) validateHTTP(ctx context.Context, camera shodan.Camera, assessment *minimax.SecurityAssessment) (*validator.HTTPValidation, bool) {
