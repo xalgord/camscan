@@ -150,12 +150,16 @@ func ProbeRTSP(ctx context.Context, cam shodan.Camera, timeout time.Duration) []
 				log.Printf("          [H264DVR] ✓ Stream accessible via %s", path)
 				return results
 			}
-			// For H264DVR paths, also check: 200 status with any body = accessible
-			if credResult.StatusCode == 200 && credResult.ContentLength > 0 && !credResult.HasWWWAuth {
+			// H264DVR key insight: these DVRs return a bare "200 OK" with NO SDP body
+			// when credentials are accepted. The differentiator vs auth-required is:
+			//   - 200 + WWW-Authenticate → creds rejected (buggy firmware)
+			//   - 200 + NO WWW-Authenticate → creds accepted (stream available via SETUP/PLAY)
+			// This is different from standard RTSP where 200 must include SDP.
+			if credResult.StatusCode == 200 && !credResult.HasWWWAuth {
 				credResult.Accessible = true
 				credResult.DefaultCreds = true
 				results = append(results, credResult)
-				log.Printf("          [H264DVR] ✓ Stream accessible via %s (200 + body)", path)
+				log.Printf("          [H264DVR] ✓ Stream accessible via %s (200 OK, no auth challenge = creds accepted)", path)
 				return results
 			}
 		}
