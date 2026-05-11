@@ -19,6 +19,7 @@ import (
 	"github.com/xalgord/camscan/internal/minimax"
 	"github.com/xalgord/camscan/internal/output"
 	"github.com/xalgord/camscan/internal/shodan"
+	"github.com/xalgord/camscan/internal/validator"
 
 	"github.com/fatih/color"
 	"github.com/spf13/cobra"
@@ -41,18 +42,25 @@ var Version = func() string {
 }()
 
 var (
-	country    string
-	state      string
-	city       string
-	cameraType string
-	rawQuery   string
-	limit      int
-	outputFmt  string
-	verbose    bool
-	noAI       bool
-	webhookURL string
-	daemon     bool
-	interval   string
+	country         string
+	state           string
+	city            string
+	cameraType      string
+	rawQuery        string
+	limit           int
+	outputFmt       string
+	outputFile      string
+	verbose         bool
+	noAI            bool
+	webhookURL      string
+	daemon          bool
+	interval        string
+	validateHTTP    bool
+	passiveOnly     bool
+	validateTimeout time.Duration
+	loginCredential  string
+	authorizedLogin  bool
+	testDefaultCreds bool
 )
 
 var rootCmd = &cobra.Command{
@@ -63,13 +71,18 @@ to assess their security posture.
 
 Supports filtering by country, state, city, and camera type.
 Use --query for raw Shodan dorks or natural-language queries (AI-powered).
-All analysis is passive — no connections are made to discovered devices.`,
+By default, HTTP/HTTPS targets are actively validated with Rod/Chromium to
+confirm camera content vs. login walls — eliminating AI false positives.
+Use --passive-only to disable active connections and rely on Shodan banner data only.
+Use --login-credential only on authorized scopes; it tests one supplied credential once after a login wall is detected.`,
 	Example: `  camscan --country IN --limit 10
   camscan --country US --city "New York" --type hikvision
   camscan -c RU --city Moscow -v --limit 5
   camscan --country JP --no-ai --output json
   camscan --query 'product:"Hikvision" country:IN'
   camscan --query "find hikvision cameras in mumbai" --limit 10
+  camscan --query 'product:"Hikvision" country:PK' --passive-only
+  CAMSCAN_LOGIN_CREDENTIAL='admin:admin' camscan --query 'net:"192.0.2.0/24" product:"Hikvision"' --authorized-login-test
   camscan --country IN --daemon --webhook https://discord.com/api/webhooks/...
   camscan --country IN --daemon --interval 30m --webhook https://discord.com/api/webhooks/...`,
 	RunE:    runScan,
@@ -80,15 +93,22 @@ func init() {
 	rootCmd.Flags().StringVarP(&country, "country", "c", "", "2-letter country code (e.g., IN, US, RU)")
 	rootCmd.Flags().StringVarP(&state, "state", "s", "", "State or region name")
 	rootCmd.Flags().StringVar(&city, "city", "", "City name")
-	rootCmd.Flags().StringVarP(&cameraType, "type", "t", "", "Camera type: hikvision, dahua, axis, rtsp, dvr, nvr, avtech, geovision, webcamxp, yawcam, blueiris, all (default: broad CCTV search)")
+	rootCmd.Flags().StringVarP(&cameraType, "type", "t", "", "Camera type: hikvision, dahua, huawei, tiandy, axis, rtsp, dvr, nvr, avtech, geovision, webcamxp, yawcam, blueiris, all (default: broad CCTV search)")
 	rootCmd.Flags().StringVarP(&rawQuery, "query", "q", "", "Raw Shodan query or natural-language search (AI-powered). When set, --country is optional.")
 	rootCmd.Flags().IntVarP(&limit, "limit", "l", 25, "Maximum number of results")
 	rootCmd.Flags().StringVarP(&outputFmt, "output", "o", "table", "Output format: table, json")
+	rootCmd.Flags().StringVarP(&outputFile, "output-file", "f", "", "Append results to this file in JSONL format (each scan = one JSON line)")
 	rootCmd.Flags().BoolVarP(&verbose, "verbose", "v", false, "Show detailed results with full banner data")
 	rootCmd.Flags().BoolVar(&noAI, "no-ai", false, "Skip Minimax AI analysis, show Shodan results only")
 	rootCmd.Flags().StringVar(&webhookURL, "webhook", "", "Discord webhook URL for alerts (overrides DISCORD_WEBHOOK_URL env)")
 	rootCmd.Flags().BoolVar(&daemon, "daemon", false, "Run continuously in daemon mode (for systemd)")
 	rootCmd.Flags().StringVar(&interval, "interval", "0", "Scan interval in daemon mode (0 = single scan + dashboard only, e.g., 15m, 1h)")
+	rootCmd.Flags().BoolVar(&validateHTTP, "validate-http", true, "Actively render HTTP/HTTPS web interfaces with Rod before reporting findings (default: on)")
+	rootCmd.Flags().BoolVar(&passiveOnly, "passive-only", false, "Disable active HTTP validation; rely on Shodan banners and AI analysis only")
+	rootCmd.Flags().DurationVar(&validateTimeout, "validate-timeout", 8*time.Second, "Timeout per active HTTP validation attempt")
+	rootCmd.Flags().StringVar(&loginCredential, "login-credential", "", "Authorized single credential to try after Rod detects a login wall, format user:pass (or CAMSCAN_LOGIN_CREDENTIAL)")
+	rootCmd.Flags().BoolVar(&authorizedLogin, "authorized-login-test", false, "Confirm you are authorized to test the supplied credential on every scan target")
+	rootCmd.Flags().BoolVar(&testDefaultCreds, "test-default-creds", false, "Automatically test known vendor default credentials when a login page is detected (requires --authorized-login-test)")
 }
 
 func Execute() {
@@ -113,6 +133,16 @@ func isShodanDork(input string) bool {
 		return true
 	}
 	return false
+}
+
+func parseLoginCredential(raw string) (validator.Credentials, error) {
+	raw = strings.TrimSpace(raw)
+	user, pass, ok := strings.Cut(raw, ":")
+	user = strings.TrimSpace(user)
+	if !ok || user == "" || pass == "" {
+		return validator.Credentials{}, fmt.Errorf("login credential must use user:pass format")
+	}
+	return validator.Credentials{Username: user, Password: pass}, nil
 }
 
 func runScan(cmd *cobra.Command, args []string) error {
@@ -147,6 +177,38 @@ func runScan(cmd *cobra.Command, args []string) error {
 	}
 	if country != "" && len(country) != 2 {
 		return fmt.Errorf("country must be a 2-letter code (e.g., IN, US, RU)")
+	}
+
+	// --passive-only overrides --validate-http
+	if passiveOnly {
+		validateHTTP = false
+	}
+
+	credentialValue := loginCredential
+	if credentialValue == "" {
+		credentialValue = os.Getenv("CAMSCAN_LOGIN_CREDENTIAL")
+	}
+	var loginCred *validator.Credentials
+	if credentialValue != "" {
+		if !validateHTTP {
+			return fmt.Errorf("--login-credential/CAMSCAN_LOGIN_CREDENTIAL requires active validation (do not use --passive-only)")
+		}
+		if !authorizedLogin {
+			return fmt.Errorf("--login-credential requires --authorized-login-test to confirm you are authorized to test every scan target")
+		}
+		parsed, parseErr := parseLoginCredential(credentialValue)
+		if parseErr != nil {
+			return parseErr
+		}
+		loginCred = &parsed
+	}
+	if testDefaultCreds {
+		if !validateHTTP {
+			return fmt.Errorf("--test-default-creds requires active validation (do not use --passive-only)")
+		}
+		if !authorizedLogin {
+			return fmt.Errorf("--test-default-creds requires --authorized-login-test to confirm you are authorized to test every scan target")
+		}
 	}
 
 	// Build search query (structured mode, used when --query is not set)
@@ -191,7 +253,12 @@ func runScan(cmd *cobra.Command, args []string) error {
 		if rawQuery != "" {
 			dim.Printf("│  %-47s│\n", fmt.Sprintf("Query: %s", rawQuery))
 		} else {
-			dim.Printf("│  %-47s│\n", fmt.Sprintf("Country: %s  Limit: %d  Type: %s", strings.ToUpper(country), limit, func() string { if cameraType == "" { return "default" }; return cameraType }()))
+			dim.Printf("│  %-47s│\n", fmt.Sprintf("Country: %s  Limit: %d  Type: %s", strings.ToUpper(country), limit, func() string {
+				if cameraType == "" {
+					return "default"
+				}
+				return cameraType
+			}()))
 		}
 		dim.Printf("│  %-47s│\n", "Shodan:    ✓ connected")
 		if noAI {
@@ -204,13 +271,40 @@ func runScan(cmd *cobra.Command, args []string) error {
 		} else {
 			dim.Printf("│  %-47s│\n", "Discord:   ✗ no webhook configured")
 		}
+		if validateHTTP {
+			dim.Printf("│  %-47s│\n", fmt.Sprintf("Validate:  ✓ Rod HTTP (%s)", validateTimeout))
+			if loginCred != nil {
+				dim.Printf("│  %-47s│\n", "LoginTest: ✓ one supplied credential")
+			}
+			if testDefaultCreds {
+				dim.Printf("│  %-47s│\n", "DefCreds:  ✓ vendor defaults enabled")
+			}
+		} else {
+			dim.Printf("│  %-47s│\n", "Validate:  ✗ passive only (--passive-only)")
+		}
 		dim.Printf("│  %-47s│\n", "Dashboard: ✓ http://localhost:9847")
+		if outputFile != "" {
+			dim.Printf("│  %-47s│\n", fmt.Sprintf("SaveFile:  ✓ %s (append)", outputFile))
+		}
 		dim.Println("└─────────────────────────────────────────────────┘")
 		_ = green // suppress unused
 	}
 
 	// Run analysis
-	a := analyzer.New(shodanClient, minimaxClient, notifier, hub, noAI)
+	var analyzerOpts []analyzer.Option
+	if validateHTTP {
+		var validatorOpts []validator.Option
+		if loginCred != nil {
+			validatorOpts = append(validatorOpts, validator.WithCredentials(*loginCred))
+		}
+		httpValidator := validator.NewHTTPValidator(validateTimeout, validatorOpts...)
+		defer httpValidator.Close()
+		analyzerOpts = append(analyzerOpts, analyzer.WithHTTPValidator(httpValidator))
+	}
+	if testDefaultCreds {
+		analyzerOpts = append(analyzerOpts, analyzer.WithDefaultCredsTesting(true))
+	}
+	a := analyzer.New(shodanClient, minimaxClient, notifier, hub, noAI, analyzerOpts...)
 
 	// Determine output format
 	format := output.FormatTable
@@ -265,6 +359,11 @@ func runOnce(ctx context.Context, a *analyzer.Analyzer, query *shodan.SearchQuer
 	}
 
 	output.Render(results, total, format, verbose)
+	if outputFile != "" {
+		if ferr := output.RenderToFile(results, total, outputFile); ferr != nil {
+			log.Printf("  ⚠ File output error: %v", ferr)
+		}
+	}
 	return nil
 }
 
@@ -355,6 +454,11 @@ func runDaemon(ctx context.Context, a *analyzer.Analyzer, query *shodan.SearchQu
 		if len(newResults) > 0 {
 			log.Printf("  ├─ Cameras found: %d / Total in Shodan: %d", len(newResults), total)
 			output.Render(newResults, total, format, verbose)
+			if outputFile != "" {
+				if ferr := output.RenderToFile(newResults, total, outputFile); ferr != nil {
+					log.Printf("  ⚠ File output error: %v", ferr)
+				}
+			}
 		} else {
 			log.Printf("  └─ No cameras found")
 		}
@@ -419,6 +523,11 @@ func runDaemon(ctx context.Context, a *analyzer.Analyzer, query *shodan.SearchQu
 			if len(newResults) > 0 {
 				log.Printf("  ├─ New cameras: %d / Total in Shodan: %d", len(newResults), total)
 				output.Render(newResults, total, format, verbose)
+				if outputFile != "" {
+					if ferr := output.RenderToFile(newResults, total, outputFile); ferr != nil {
+						log.Printf("  ⚠ File output error: %v", ferr)
+					}
+				}
 			} else {
 				log.Printf("  └─ No new cameras found this cycle")
 			}
@@ -455,6 +564,11 @@ func runOnceRaw(ctx context.Context, a *analyzer.Analyzer, rawQuery string, form
 	}
 
 	output.Render(results, total, format, verbose)
+	if outputFile != "" {
+		if ferr := output.RenderToFile(results, total, outputFile); ferr != nil {
+			log.Printf("  ⚠ File output error: %v", ferr)
+		}
+	}
 	return nil
 }
 
@@ -504,6 +618,11 @@ func runDaemonRaw(ctx context.Context, a *analyzer.Analyzer, rawQuery string, fo
 		if len(newResults) > 0 {
 			log.Printf("  ├─ Cameras found: %d / Total in Shodan: %d", len(newResults), total)
 			output.Render(newResults, total, format, verbose)
+			if outputFile != "" {
+				if ferr := output.RenderToFile(newResults, total, outputFile); ferr != nil {
+					log.Printf("  ⚠ File output error: %v", ferr)
+				}
+			}
 		} else {
 			log.Printf("  └─ No cameras found")
 		}
@@ -568,6 +687,11 @@ func runDaemonRaw(ctx context.Context, a *analyzer.Analyzer, rawQuery string, fo
 			if len(newResults) > 0 {
 				log.Printf("  ├─ New cameras: %d / Total in Shodan: %d", len(newResults), total)
 				output.Render(newResults, total, format, verbose)
+				if outputFile != "" {
+					if ferr := output.RenderToFile(newResults, total, outputFile); ferr != nil {
+						log.Printf("  ⚠ File output error: %v", ferr)
+					}
+				}
 			} else {
 				log.Printf("  └─ No new cameras found this cycle")
 			}

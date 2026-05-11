@@ -63,23 +63,45 @@ type AuthAnalysis struct {
 	BypassMethod       string   `json:"bypass_method,omitempty"`
 }
 
+// ActiveValidation records opt-in active validation evidence.
+type ActiveValidation struct {
+	Method         string   `json:"method"`
+	TargetURL      string   `json:"target_url"`
+	FinalURL       string   `json:"final_url,omitempty"`
+	Attempted      bool     `json:"attempted"`
+	Reachable      bool     `json:"reachable"`
+	AuthRequired   bool     `json:"auth_required"`
+	LoginDetected  bool     `json:"login_detected"`
+	LoginAttempted bool     `json:"login_attempted"`
+	LoginSucceeded bool     `json:"login_succeeded"`
+	LoginUsername  string   `json:"login_username,omitempty"`
+	BlankPage      bool     `json:"blank_page"`
+	OpenContent    bool     `json:"open_content"`
+	Title          string   `json:"title,omitempty"`
+	TextSample     string   `json:"text_sample,omitempty"`
+	Evidence       []string `json:"evidence,omitempty"`
+	LoginError     string   `json:"login_error,omitempty"`
+	Error          string   `json:"error,omitempty"`
+}
+
 // SecurityAssessment is the structured output from AI analysis.
 type SecurityAssessment struct {
-	RiskLevel          string          `json:"risk_level"`    // Critical, High, Medium, Low
-	RiskScore          int             `json:"risk_score"`    // 0-100 numeric score
-	IsOpen             bool            `json:"is_open"`       // No authentication required
-	DefaultCreds       bool            `json:"default_creds"` // Confirmed working default credentials
-	Exploitable        bool            `json:"exploitable"`   // Confirmed exploitable without needing unknown credentials
-	ExploitEvidence    string          `json:"exploit_evidence,omitempty"`
-	Vulnerabilities    []Vulnerability `json:"vulnerabilities"`        // Structured vulnerability findings
-	Recommendations    []string        `json:"recommendations"`        // Security recommendations
-	Summary            string          `json:"summary"`                // One-line summary
-	AttackSurface      AttackSurface   `json:"attack_surface"`         // Exposed entry points
-	AuthAnalysis       AuthAnalysis    `json:"auth_analysis"`          // Authentication posture
-	ExploitPaths       []string        `json:"exploit_paths"`          // Concrete attack chains
-	CveReferences      []string        `json:"cve_references"`         // Related CVE IDs
-	AccessInstructions []string        `json:"access_instructions"`    // How to actually access/verify (tool + URL + protocol)
-	RawResponse        string          `json:"raw_response,omitempty"` // Unprocessed AI response for debugging/inspection
+	RiskLevel          string            `json:"risk_level"`    // Critical, High, Medium, Low
+	RiskScore          int               `json:"risk_score"`    // 0-100 numeric score
+	IsOpen             bool              `json:"is_open"`       // No authentication required
+	DefaultCreds       bool              `json:"default_creds"` // Confirmed working default credentials
+	Exploitable        bool              `json:"exploitable"`   // Confirmed exploitable without needing unknown credentials
+	ExploitEvidence    string            `json:"exploit_evidence,omitempty"`
+	Vulnerabilities    []Vulnerability   `json:"vulnerabilities"`     // Structured vulnerability findings
+	Recommendations    []string          `json:"recommendations"`     // Security recommendations
+	Summary            string            `json:"summary"`             // One-line summary
+	AttackSurface      AttackSurface     `json:"attack_surface"`      // Exposed entry points
+	AuthAnalysis       AuthAnalysis      `json:"auth_analysis"`       // Authentication posture
+	ExploitPaths       []string          `json:"exploit_paths"`       // Concrete attack chains
+	CveReferences      []string          `json:"cve_references"`      // Related CVE IDs
+	AccessInstructions []string          `json:"access_instructions"` // How to actually access/verify (tool + URL + protocol)
+	ActiveValidation   *ActiveValidation `json:"active_validation,omitempty"`
+	RawResponse        string            `json:"raw_response,omitempty"` // Unprocessed AI response for debugging/inspection
 }
 
 // VulnTitles returns a flat string slice of vulnerability titles for backward compatibility.

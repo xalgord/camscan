@@ -71,6 +71,8 @@ type CameraAlert struct {
 	ExploitPaths       []string
 	CveReferences      []string
 	AccessInstructions []string
+	ConfirmationType   string // e.g. active_open, active_login, passive_open, none
+	ConfirmationReason string // Human-readable evidence explanation
 }
 
 // SendAlert sends a rich embed notification for an open/critical camera.
@@ -160,6 +162,15 @@ func (n *Notifier) SendAlert(alert CameraAlert) error {
 			steps = append(steps, fmt.Sprintf("%d. %s", i+1, inst))
 		}
 		embed.Fields = append(embed.Fields, Field{Name: "🧭 How to Access", Value: strings.Join(steps, "\n"), Inline: false})
+	}
+
+	// Add confirmation metadata for audit trail
+	if alert.ConfirmationType != "" && alert.ConfirmationType != "none" {
+		confValue := fmt.Sprintf("`%s`", alert.ConfirmationType)
+		if alert.ConfirmationReason != "" {
+			confValue += " — " + alert.ConfirmationReason
+		}
+		embed.Fields = append(embed.Fields, Field{Name: "🔬 Confirmation", Value: confValue, Inline: false})
 	}
 
 	payload := webhookPayload{

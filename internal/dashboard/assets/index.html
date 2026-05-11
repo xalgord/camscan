@@ -172,6 +172,8 @@ function addFinding(key,data){
     (vulnCount?'<span>🛡 '+vulnCount+' vulns</span>':'')+
     (cveCount?'<span>📋 '+cveCount+' CVEs</span>':'')+
     (a.exploitable?'<span>⚔ Exploitable</span>':'')+
+    (a.active_validation?'<span>🌐 Validated</span>':'')+
+    (a.active_validation&&a.active_validation.login_succeeded?'<span>🔑 Login OK</span>':'')+
     '<span>'+(a.is_open?'🔓 Open':'🔒 Auth')+'</span></div>';
 
   const parent=document.getElementById('findings');
@@ -242,6 +244,29 @@ function renderPanel(key){
     h+='<dt>Bypass</dt><dd>'+(aa.bypass_possible?'⚠️ Yes':'No')+'</dd>';
     if(aa.bypass_method)h+='<dt>Method</dt><dd>'+esc(aa.bypass_method)+'</dd>';
     h+='</dl></div>';
+  }
+
+  if(a.active_validation){
+    const av=a.active_validation;
+    h+='<div class="dp-section"><h3>🌐 Active Validation</h3><dl class="dp-kv">';
+    h+='<dt>Method</dt><dd>'+esc(av.method||'')+'</dd>';
+    if(av.target_url)h+='<dt>Target</dt><dd>'+esc(av.target_url)+'</dd>';
+    if(av.final_url&&av.final_url!==av.target_url)h+='<dt>Final</dt><dd>'+esc(av.final_url)+'</dd>';
+    h+='<dt>Reachable</dt><dd>'+(av.reachable?'Yes':'No')+'</dd>';
+    h+='<dt>Open Content</dt><dd>'+(av.open_content?'Yes':'No')+'</dd>';
+    h+='<dt>Auth/Login</dt><dd>'+((av.auth_required||av.login_detected)?'Yes':'No')+'</dd>';
+    h+='<dt>Login Attempt</dt><dd>'+(av.login_attempted?'Yes':'No')+'</dd>';
+    h+='<dt>Login Success</dt><dd>'+(av.login_succeeded?'Yes':'No')+'</dd>';
+    if(av.login_username)h+='<dt>Login User</dt><dd>'+esc(av.login_username)+'</dd>';
+    if(av.login_error)h+='<dt>Login Error</dt><dd>'+esc(av.login_error)+'</dd>';
+    if(av.error)h+='<dt>Error</dt><dd>'+esc(av.error)+'</dd>';
+    h+='</dl>';
+    if(av.evidence&&av.evidence.length){
+      h+='<div style="margin-top:8px">';
+      av.evidence.forEach(function(ev){h+='<div class="dp-tag" style="background:var(--surface2);border:1px solid var(--border);color:var(--text2)">'+esc(ev)+'</div>'});
+      h+='</div>';
+    }
+    h+='</div>';
   }
 
   if(a.vulnerabilities&&a.vulnerabilities.length){

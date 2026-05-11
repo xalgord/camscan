@@ -109,15 +109,23 @@ PHASE 4 — VULNERABILITY ASSESSMENT
 For the identified product + firmware version, check for:
 
 A) Known CVEs (map product/version to specific CVEs):
-   - Hikvision: CVE-2021-36260 (command injection), CVE-2017-7921 (auth bypass)
-   - Dahua: CVE-2021-33044 (auth bypass), CVE-2020-25078 (password leak)
-   - Axis: CVE-2018-10660 (RCE), CVE-2018-10661 (auth bypass)
-   - Foscam: CVE-2018-6830 (buffer overflow), CVE-2017-2871 (command injection)
-   - Avtech: CVE-2016-11021 (command injection via URL)
+   - Hikvision ONLY: CVE-2021-36260 (command injection), CVE-2017-7921 (auth bypass)
+   - Dahua ONLY: CVE-2021-33044 (auth bypass), CVE-2020-25078 (password leak)
+   - Axis ONLY: CVE-2018-10660 (RCE), CVE-2018-10661 (auth bypass)
+   - Foscam ONLY: CVE-2018-6830 (buffer overflow), CVE-2017-2871 (command injection)
+   - Avtech ONLY: CVE-2016-11021 (command injection via URL)
    - Boa server: CVE-2017-9833 (path traversal), multiple RCE in < 0.94.14
    - mini_httpd: CVE-2018-18778 (path traversal)
    - GoAhead: CVE-2017-17562 (RCE via LD_PRELOAD)
    - Generic: Check for heartbleed, POODLE, BEAST if SSL info present
+
+   ⚠️ VENDOR-SCOPED CVE RULE (MANDATORY):
+   - ONLY reference CVEs that match the EXACT vendor identified in Phase 1.
+   - Do NOT apply Dahua CVEs (33044, 25078) to Hikvision cameras.
+   - Do NOT apply Hikvision CVEs (36260, 7921) to Dahua cameras.
+   - Do NOT apply Axis/Foscam/Avtech CVEs to other vendors.
+   - If you cannot confirm the exact firmware version is vulnerable, do NOT include the CVE in cve_references or vulnerabilities. You may mention it in recommendations as "ensure firmware is patched against CVE-XXXX".
+   - NEVER invent or reference CVEs that do not exist in the list above.
 
 B) Web vulnerabilities based on banner signatures:
    - Path traversal: /../ patterns, cgi-bin endpoints without input validation
@@ -167,12 +175,22 @@ Risk level mapping:
 - If you cannot determine the actual page content from the banner, do NOT assume it is accessible. State "Verification needed" and cap at Medium.
 - HTTP 200 with empty body or HTML with no functional content = NOT open access.
 
+⚠️ LOGIN PAGE DETECTION (MANDATORY):
+- ANY of the following in the banner/title/HTML means auth IS required — set auth_required=true, auth_type="form", is_open=false, default_creds=false:
+  • "login.asp", "login.html", "login.php", "login.cgi", "/login"
+  • "User Name", "Username", "Password", type="password"
+  • "Sign in", "Log in", "Authentication", "401 Unauthorized", "403 Forbidden"
+  • "WWW-Authenticate", "Basic realm", "Digest realm"
+  • Any HTML form with username/password input fields
+- A device with a login page is PROTECTED, not open. "Reachable" ≠ "accessible". A web interface that loads a login form is doing exactly what it should.
+
 ⚠️ AUTHENTICATION = NOT VULNERABLE RULE (MANDATORY):
 - If the camera requires authentication and you CANNOT confirm bypass or default credentials working, it is NOT VULNERABLE.
 - A login page (HTTP 401, HTTP 403, login form) means the device is PROTECTED. Do NOT list it as vulnerable just because it exists on the internet.
-- Only mark as vulnerable if: (a) no auth required (confirmed open access), OR (b) auth bypass confirmed via known CVE with evidence, OR (c) default credentials confirmed working, OR (d) exploitable=true with concrete evidence.
+- Only mark as vulnerable if: (a) no auth required (confirmed open access with actual video/admin content visible without login), OR (b) auth bypass confirmed via known CVE with evidence from THIS banner, OR (c) default credentials confirmed working (banner must show successful auth response), OR (d) exploitable=true with concrete evidence from the banner.
 - "Might be using default credentials" is NOT confirmation. You must cite specific evidence from the banner.
-- If auth is required and no bypass/default-credential/exploitable path is confirmed: risk_level=Low, risk_score ≤ 20, is_open=false, default_creds=false, exploitable=false, vulnerabilities=[] (empty), exploit_paths=[] (empty).
+- "Default credentials are common for this vendor" is NOT confirmation. Passive Shodan data CANNOT prove credentials work.
+- If auth is required and no bypass/default-credential/exploitable path is confirmed: risk_level=Low, risk_score ≤ 20, is_open=false, default_creds=false, exploitable=false, vulnerabilities=[] (empty), exploit_paths=[] (empty), cve_references=[] (empty).
 - Found CVEs that are not exploitable from the provided evidence are NOT vulnerabilities. You may mention patching in recommendations, but do not include them in vulnerabilities and do not raise the risk above Low.
 
 Describe concrete EXPLOIT PATHS — step-by-step attack chains:

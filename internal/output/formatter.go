@@ -3,8 +3,11 @@ package output
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 	"os"
+	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/xalgord/camscan/internal/analyzer"
 	"github.com/xalgord/camscan/internal/risk"
@@ -34,23 +37,26 @@ func Render(results []analyzer.Result, total int, format Format, verbose bool) {
 
 func renderJSON(results []analyzer.Result) {
 	type jsonResult struct {
-		IP              string   `json:"ip"`
-		Port            int      `json:"port"`
-		Product         string   `json:"product"`
-		Org             string   `json:"org"`
-		City            string   `json:"city"`
-		Country         string   `json:"country"`
-		Transport       string   `json:"transport"`
-		Hostnames       []string `json:"hostnames,omitempty"`
-		RiskLevel       string   `json:"risk_level,omitempty"`
-		IsOpen          bool     `json:"is_open,omitempty"`
-		DefaultCreds    bool     `json:"default_creds,omitempty"`
-		Exploitable     bool     `json:"exploitable,omitempty"`
-		Vulns           []string `json:"vulnerabilities,omitempty"`
-		Recommendations []string `json:"recommendations,omitempty"`
-		Summary         string   `json:"summary,omitempty"`
-		Error           string   `json:"error,omitempty"`
-		Banner          string   `json:"banner,omitempty"`
+		IP                 string      `json:"ip"`
+		Port               int         `json:"port"`
+		Product            string      `json:"product"`
+		Org                string      `json:"org"`
+		City               string      `json:"city"`
+		Country            string      `json:"country"`
+		Transport          string      `json:"transport"`
+		Hostnames          []string    `json:"hostnames,omitempty"`
+		RiskLevel          string      `json:"risk_level,omitempty"`
+		IsOpen             bool        `json:"is_open,omitempty"`
+		DefaultCreds       bool        `json:"default_creds,omitempty"`
+		Exploitable        bool        `json:"exploitable,omitempty"`
+		Vulns              []string    `json:"vulnerabilities,omitempty"`
+		Recommendations    []string    `json:"recommendations,omitempty"`
+		ActiveValidation   interface{} `json:"active_validation,omitempty"`
+		ConfirmationType   string      `json:"confirmation_type,omitempty"`
+		ConfirmationReason string      `json:"confirmation_reason,omitempty"`
+		Summary            string      `json:"summary,omitempty"`
+		Error              string      `json:"error,omitempty"`
+		Banner             string      `json:"banner,omitempty"`
 	}
 
 	out := make([]jsonResult, len(results))
@@ -73,6 +79,9 @@ func renderJSON(results []analyzer.Result) {
 			jr.Exploitable = r.Assessment.Exploitable
 			jr.Vulns = r.Assessment.VulnTitles()
 			jr.Recommendations = r.Assessment.Recommendations
+			jr.ActiveValidation = r.Assessment.ActiveValidation
+			jr.ConfirmationType = r.ConfirmationType
+			jr.ConfirmationReason = r.ConfirmationReason
 			jr.Summary = r.Assessment.Summary
 		}
 		out[i] = jr
@@ -193,6 +202,23 @@ func renderTable(results []analyzer.Result, total int, verbose bool) {
 				fmt.Printf("    Open:      %v\n", r.Assessment.IsOpen)
 				fmt.Printf("    DefCreds:  %v\n", r.Assessment.DefaultCreds)
 				fmt.Printf("    Exploit:   %v\n", r.Assessment.Exploitable)
+				if r.Assessment.ActiveValidation != nil {
+					v := r.Assessment.ActiveValidation
+					fmt.Printf("    ActiveVal: %s reachable=%v open=%v auth=%v login=%v blank=%v\n",
+						v.Method, v.Reachable, v.OpenContent, v.AuthRequired || v.LoginDetected, v.LoginSucceeded, v.BlankPage)
+					if v.TargetURL != "" {
+						fmt.Printf("    Validated: %s\n", v.TargetURL)
+					}
+					if v.LoginAttempted && v.LoginUsername != "" {
+						fmt.Printf("    LoginUser: %s\n", v.LoginUsername)
+					}
+					if v.LoginError != "" {
+						fmt.Printf("    LoginErr:  %s\n", v.LoginError)
+					}
+					if v.Error != "" {
+						fmt.Printf("    ValError:  %s\n", v.Error)
+					}
+				}
 
 				if len(r.Assessment.Vulnerabilities) > 0 {
 					fmt.Printf("    Vulns:     (%d found)\n", len(r.Assessment.Vulnerabilities))
@@ -259,3 +285,114 @@ func formatRisk(level string) string {
 }
 
 // riskIcon and truncate removed — now using shared risk.Icon() and util.Truncate()
+
+// fileResult is the JSON structure written to the output file.
+type fileResult struct {
+	IP                 string      `json:"ip"`
+	Port               int         `json:"port"`
+	Product            string      `json:"product"`
+	Org                string      `json:"org"`
+	City               string      `json:"city"`
+	Country            string      `json:"country"`
+	Transport          string      `json:"transport"`
+	Hostnames          []string    `json:"hostnames,omitempty"`
+	RiskLevel          string      `json:"risk_level,omitempty"`
+	RiskScore          int         `json:"risk_score,omitempty"`
+	IsOpen             bool        `json:"is_open,omitempty"`
+	DefaultCreds       bool        `json:"default_creds,omitempty"`
+	Exploitable        bool        `json:"exploitable,omitempty"`
+	Vulns              []string    `json:"vulnerabilities,omitempty"`
+	CVEs               []string    `json:"cve_references,omitempty"`
+	Recommendations    []string    `json:"recommendations,omitempty"`
+	ActiveValidation   interface{} `json:"active_validation,omitempty"`
+	ConfirmationType   string      `json:"confirmation_type,omitempty"`
+	ConfirmationReason string      `json:"confirmation_reason,omitempty"`
+	Summary            string      `json:"summary,omitempty"`
+	Error              string      `json:"error,omitempty"`
+}
+
+// scanRecord wraps a single scan's results with metadata.
+type scanRecord struct {
+	Timestamp string       `json:"timestamp"`
+	Total     int          `json:"total_in_shodan"`
+	Count     int          `json:"results_count"`
+	Results   []fileResult `json:"results"`
+}
+
+func toFileResults(results []analyzer.Result) []fileResult {
+	out := make([]fileResult, len(results))
+	for i, r := range results {
+		fr := fileResult{
+			IP:        r.Camera.IP,
+			Port:      r.Camera.Port,
+			Product:   r.Camera.Product,
+			Org:       r.Camera.Org,
+			City:      r.Camera.Location.City,
+			Country:   r.Camera.Location.Country,
+			Transport: r.Camera.Transport,
+			Hostnames: r.Camera.Hostnames,
+			Error:     r.Error,
+		}
+		if r.Assessment != nil {
+			fr.RiskLevel = r.Assessment.RiskLevel
+			fr.RiskScore = r.Assessment.RiskScore
+			fr.IsOpen = r.Assessment.IsOpen
+			fr.DefaultCreds = r.Assessment.DefaultCreds
+			fr.Exploitable = r.Assessment.Exploitable
+			fr.Vulns = r.Assessment.VulnTitles()
+			fr.CVEs = r.Assessment.CveReferences
+			fr.Recommendations = r.Assessment.Recommendations
+			fr.ActiveValidation = r.Assessment.ActiveValidation
+			fr.ConfirmationType = r.ConfirmationType
+			fr.ConfirmationReason = r.ConfirmationReason
+			fr.Summary = r.Assessment.Summary
+		}
+		out[i] = fr
+	}
+	return out
+}
+
+// RenderToFile appends scan results to the specified file.
+// Each invocation adds a new timestamped JSON record on its own line (JSONL format).
+// Previous results are never deleted.
+func RenderToFile(results []analyzer.Result, total int, filePath string) error {
+	if len(results) == 0 {
+		return nil
+	}
+
+	// Ensure parent directory exists
+	dir := filepath.Dir(filePath)
+	if dir != "." && dir != "" {
+		if err := os.MkdirAll(dir, 0755); err != nil {
+			return fmt.Errorf("create output directory: %w", err)
+		}
+	}
+
+	// Open file in append mode (create if doesn't exist)
+	f, err := os.OpenFile(filePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		return fmt.Errorf("open output file: %w", err)
+	}
+	defer f.Close()
+
+	record := scanRecord{
+		Timestamp: time.Now().UTC().Format(time.RFC3339),
+		Total:     total,
+		Count:     len(results),
+		Results:   toFileResults(results),
+	}
+
+	data, err := json.Marshal(record)
+	if err != nil {
+		return fmt.Errorf("marshal results: %w", err)
+	}
+
+	// Write as a single JSONL line (one JSON object per line)
+	data = append(data, '\n')
+	if _, err := f.Write(data); err != nil {
+		return fmt.Errorf("write results: %w", err)
+	}
+
+	log.Printf("  📁 Results appended to %s (%d records)", filePath, len(results))
+	return nil
+}

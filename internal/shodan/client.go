@@ -47,6 +47,10 @@ func (q *SearchQuery) BuildQuery() string {
 		parts = append(parts, `product:"Hikvision IP Camera"`)
 	case "dahua":
 		parts = append(parts, `product:"Dahua"`)
+	case "huawei":
+		parts = append(parts, `product:"Huawei"`)
+	case "tiandy":
+		parts = append(parts, `product:"Tiandy"`)
 	case "axis":
 		parts = append(parts, `product:"AXIS"`)
 	case "rtsp":

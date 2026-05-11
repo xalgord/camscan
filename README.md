@@ -29,9 +29,10 @@
 |---|---|
 | 🔍 **Shodan Discovery** | Find CCTV & IP cameras by country, state, or city |
 | 🤖 **AI Security Analysis** | Minimax M2.7 evaluates each camera's security posture passively |
+| 🌐 **Optional Active HTTP Validation** | `--validate-http` uses Rod/Chromium to render web UIs, suppress login/blank-page false positives, and optionally verify one authorized credential |
 | 📊 **Real-Time Dashboard** | Live web dashboard at `:9847` with confirmed findings/logs panels, drill-down details, and raw AI response viewer |
-| 🔐 **Strict Vulnerability Gate** | Cameras behind authentication are NOT reported unless open access, working default credentials, auth bypass, or exploitability is confirmed |
-| 🔔 **Discord Alerts** | Real-time webhook notifications for High/Critical risk cameras with default credentials |
+| 🔐 **Strict Vulnerability Gate** | Cameras behind authentication are NOT reported unless open access, supplied-credential login, auth bypass, or exploitability is confirmed |
+| 🔔 **Discord Alerts** | Real-time webhook notifications for confirmed High/Critical risk cameras |
 | 🔄 **Daemon Mode** | Run as a systemd service — dashboard-only (default) or with periodic scan intervals |
 | 🛡️ **Deduplication** | In-memory 24h TTL cache prevents duplicate alerts across scan cycles |
 | 🎯 **Camera Type Filters** | Hikvision, Dahua, Axis, DVR, NVR, AVTech, GeoVision, RTSP, and more |
@@ -117,6 +118,14 @@ camscan --country DE --city Berlin -v --limit 5
 
 # Skip AI analysis, raw Shodan results only
 camscan --country RU --no-ai
+
+# Actively render HTTP/HTTPS web interfaces before reporting findings
+# This is opt-in and does not try credentials, bypass auth, click controls, or exploit CVEs.
+camscan --query 'product:"Hikvision" country:PK' --validate-http
+
+# Authorized credential validation: one supplied credential, attempted only after a login wall is detected.
+# Prefer the env var to avoid storing secrets in shell history. Use only on scopes you are authorized to test.
+CAMSCAN_LOGIN_CREDENTIAL='admin:admin' camscan --query 'net:"192.0.2.0/24" product:"Hikvision"' --validate-http --authorized-login-test
 ```
 
 ### Discord Alerts
@@ -182,6 +191,10 @@ The web dashboard (`http://localhost:9847`) provides:
 | `--webhook` | | Discord webhook URL (overrides `DISCORD_WEBHOOK_URL` env) | — |
 | `--daemon` | | Run continuously in daemon mode | `false` |
 | `--interval` | | Scan interval in daemon mode (`0` = dashboard-only) | `0` |
+| `--validate-http` | | Actively render HTTP/HTTPS web interfaces with Rod before reporting findings | `false` |
+| `--validate-timeout` | | Timeout per active HTTP validation attempt | `8s` |
+| `--login-credential` | | Authorized single credential to try after Rod detects a login wall, format `user:pass` (or `CAMSCAN_LOGIN_CREDENTIAL`) | — |
+| `--authorized-login-test` | | Confirm authorization before using `--login-credential` or `CAMSCAN_LOGIN_CREDENTIAL` | `false` |
 | `--version` | | Print version and exit | — |
 
 ### Camera Types
@@ -337,7 +350,7 @@ camscan/
 
 | Concern | Implementation |
 |---|---|
-| **False-Positive Prevention** | Auth-protected cameras without confirmed bypass are capped at Medium risk, never Critical/High |
+| **False-Positive Prevention** | Auth-protected cameras without confirmed open access, supplied-credential login, or bypass are downgraded and excluded; optional Rod validation suppresses HTTP login/blank-page false positives |
 | **Rate Limits** | Exponential backoff with `Retry-After` header support (Minimax + Discord) |
 | **API Credits** | Pre-flight Shodan credit check before each scan cycle |
 | **Deduplication** | Thread-safe in-memory cache with 24h TTL (daemon mode) |
@@ -355,8 +368,10 @@ camscan/
 
 This tool is designed for **authorized security research and educational purposes only**.
 
-- All analysis is **passive** — no connections are made to discovered devices
-- The tool uses only publicly available Shodan data and AI-based inference
+- By default, analysis is **passive** — no connections are made to discovered devices
+- `--validate-http` is opt-in active validation that renders HTTP pages only; by itself it does not try credentials, bypass auth, click controls, or exploit CVEs
+- `--login-credential`/`CAMSCAN_LOGIN_CREDENTIAL` is opt-in authorized validation; it submits one supplied credential once after a login wall is detected and reports only if Rod renders camera content after login
+- Passive mode uses only publicly available Shodan data and AI-based inference
 - **Do NOT** attempt to access, authenticate against, or exploit any discovered cameras
 - Always comply with applicable laws and Shodan's [Terms of Service](https://www.shodan.io/tos)
 - The authors are not responsible for any misuse of this tool
